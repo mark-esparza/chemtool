@@ -1122,6 +1122,39 @@ app.post("/api/evaluate", (req, res) => {
 });
 
 /**
+ * Proxy to the Python science service (RDKit descriptors, similarity, and the
+ * prediction provenance contract — see science-service/ and ROADMAP.md).
+ *
+ * This is additive and non-breaking: if the service is not running, the rest of
+ * the app keeps working on the built-in heuristic engine and the proxy replies
+ * 503 so the client can fall back gracefully.
+ */
+const SCIENCE_SERVICE_URL = process.env.SCIENCE_SERVICE_URL || "http://localhost:8000";
+
+app.all("/api/science/*", async (req, res) => {
+  const subPath = req.path.replace(/^\/api\/science/, "");
+  const target = `${SCIENCE_SERVICE_URL}${subPath}`;
+  try {
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers: { "Content-Type": "application/json" },
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : JSON.stringify(req.body ?? {}),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status);
+    res.type(upstream.headers.get("content-type") || "application/json");
+    res.send(text);
+  } catch (err: any) {
+    console.warn(`[Science Service] Unreachable at ${target}: ${err?.message || err}`);
+    res.status(503).json({
+      error: "Science service is not running.",
+      hint: "Start it from science-service/ (see its README), or set SCIENCE_SERVICE_URL.",
+      service_url: SCIENCE_SERVICE_URL,
+    });
+  }
+});
+
+/**
  * Production build static server and development Vite routing
  */
 async function configureServer() {
