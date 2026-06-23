@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Playfair Display", Georgia, serif;
+  
+  /* NIH Clinical Light Theme Colors */
+  --color-clinical-bg: #F8FAFC;
+  --color-clinical-panel: #FFFFFF;
+  --color-clinical-sidebar: #F8FAFC; /* Clean off-white sidebar */
+  --color-nih-blue: #0A355C;       /* NIH primary deep corporate blue */
+  --color-neon-blue: #0A355C;      /* Map accent blue to NIH deep blue */
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #F8FAFC;
+  color: #1E293B;
+}
+
+/* Custom Sleek Dot Grid */
+.bg-dot-grid {
+  background-image: radial-gradient(#E2E8F0 1.2px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F8FAFC;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}

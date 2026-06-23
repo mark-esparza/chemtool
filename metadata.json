@@ -1,0 +1,6 @@
+{
+  "name": "Molecule Design Assistant",
+  "description": "A natural-language chemical design assistant that turns goals into structured briefs, designs candidate analogs, scores properties, and outputs ranked explainable reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
