@@ -42,29 +42,37 @@ def _parse(smiles: str) -> Chem.Mol:
     return mol
 
 
-# Build the alert catalog once at import time (PAINS A/B/C + Brenk).
-def _build_alert_catalog() -> FilterCatalog:
-    params = FilterCatalogParams()
-    for cat in (
-        FilterCatalogParams.FilterCatalogs.PAINS_A,
-        FilterCatalogParams.FilterCatalogs.PAINS_B,
-        FilterCatalogParams.FilterCatalogs.PAINS_C,
-        FilterCatalogParams.FilterCatalogs.BRENK,
-    ):
+# Build per-catalog alert filters once at import time so each match can be
+# labeled with the catalog it came from (PAINS_A/B/C, Brenk).
+def _build_alert_catalogs() -> dict[str, FilterCatalog]:
+    specs = {
+        "PAINS_A": FilterCatalogParams.FilterCatalogs.PAINS_A,
+        "PAINS_B": FilterCatalogParams.FilterCatalogs.PAINS_B,
+        "PAINS_C": FilterCatalogParams.FilterCatalogs.PAINS_C,
+        "Brenk": FilterCatalogParams.FilterCatalogs.BRENK,
+    }
+    catalogs: dict[str, FilterCatalog] = {}
+    for label, cat in specs.items():
+        params = FilterCatalogParams()
         params.AddCatalog(cat)
-    return FilterCatalog(params)
+        catalogs[label] = FilterCatalog(params)
+    return catalogs
 
 
-_ALERT_CATALOG = _build_alert_catalog()
+_ALERT_CATALOGS = _build_alert_catalogs()
 
 
 def _alerts_for(mol: Chem.Mol) -> list[StructuralAlert]:
     alerts: list[StructuralAlert] = []
-    for match in _ALERT_CATALOG.GetMatches(mol):
-        props = match.GetDescription() or "alert"
-        # FilterCatalog entries are prefixed with their source, e.g. "Brenk_..."
-        catalog = props.split("_", 1)[0].upper() if "_" in props else "ALERT"
-        alerts.append(StructuralAlert(name=props, catalog=catalog, description=""))
+    for label, catalog in _ALERT_CATALOGS.items():
+        for match in catalog.GetMatches(mol):
+            alerts.append(
+                StructuralAlert(
+                    name=match.GetDescription() or "alert",
+                    catalog=label,
+                    description="",
+                )
+            )
     return alerts
 
 

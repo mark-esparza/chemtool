@@ -83,6 +83,11 @@ export interface CompoundRecord {
 const app = express();
 const PORT = 3000;
 
+// Base URL of the Python RDKit science service (see science-service/). The app
+// works without it: property evaluation falls back to the built-in heuristic
+// engine when the service is unreachable.
+const SCIENCE_SERVICE_URL = process.env.SCIENCE_SERVICE_URL || "http://localhost:8000";
+
 // Middleware for parsing JSON
 app.use(express.json());
 
@@ -744,6 +749,64 @@ To validate this designed molecular option in physical laboratories, we outline 
 }
 
 /**
+ * Property evaluation with RDKit preferred and the heuristic engine as fallback.
+ *
+ * The Python science service is the reference implementation for the core
+ * descriptors (MW, logP, TPSA, HBD/HBA, rotatable bonds, aromatic rings, QED,
+ * Lipinski/Veber, formula, structural alerts). When it is reachable we use its
+ * real values and overlay the heuristic-only extras (SA score and the clearly
+ * labeled binding/solubility estimates) so the pipeline and UI keep working.
+ * When it is not reachable we fall back to the pure-heuristic result.
+ *
+ * `descriptor_source` records which path produced the numbers.
+ */
+type EvaluatedProperties = MolecularProperties & {
+  descriptor_source: "rdkit" | "heuristic";
+  inchikey?: string;
+};
+
+async function evaluateMolecule(smiles: string): Promise<EvaluatedProperties> {
+  const heuristic = calculateProperties(smiles);
+  try {
+    const resp = await fetch(`${SCIENCE_SERVICE_URL}/descriptors`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ smiles }),
+    });
+    if (!resp.ok) {
+      throw new Error(`science service responded ${resp.status}`);
+    }
+    const data: any = await resp.json();
+    const d = data.descriptors;
+    const alerts: string[] = Array.isArray(data.structural_alerts)
+      ? data.structural_alerts.map((a: any) => `${a.catalog}: ${a.name}`)
+      : heuristic.structural_alerts;
+
+    return {
+      ...heuristic, // keep SA score and the labeled binding/solubility estimates
+      smiles,
+      formula: d.formula,
+      mw: d.mw,
+      clogp: d.clogp,
+      tpsa: d.tpsa,
+      hbd: d.hbd,
+      hba: d.hba,
+      rotatable_bonds: d.rotatable_bonds,
+      aromatic_rings: d.aromatic_rings,
+      qed: d.qed,
+      ro5_violations: d.ro5_violations,
+      veber_violations: d.veber_violations,
+      structural_alerts: alerts,
+      inchikey: data.inchikey,
+      descriptor_source: "rdkit",
+    };
+  } catch (err: any) {
+    // Service down or SMILES rejected — keep going on the built-in engine.
+    return { ...heuristic, descriptor_source: "heuristic" };
+  }
+}
+
+/**
  * API Route: Compile brief, evaluate safety, mutate analogs, compute properties, score, rank, and explain.
  */
 app.post("/api/design-pipeline", async (req, res) => {
@@ -887,9 +950,9 @@ app.post("/api/design-pipeline", async (req, res) => {
       rawCandidates = getLocalCandidatesFallback(seedStructure, numSamples);
     }
 
-    // Step 4: Pure deterministic chemistry engine processing
-    let evaluatedCandidates: Array<MolecularProperties & { 
-      name: string; 
+    // Step 4: Property evaluation (RDKit preferred, heuristic fallback)
+    let evaluatedCandidates: Array<EvaluatedProperties & {
+      name: string;
       mutation_rationale: string;
       tanimoto_distance: number;
       is_pareto_optimal: boolean;
@@ -897,12 +960,16 @@ app.post("/api/design-pipeline", async (req, res) => {
       ood_flag: boolean;
     }> = [];
 
-    for (const cand of rawCandidates) {
-      if (!cand.smiles) continue;
-      
-      const props = calculateProperties(cand.smiles);
+    // Evaluate every candidate's descriptors in parallel before filtering.
+    const evaluatedRaw = await Promise.all(
+      rawCandidates
+        .filter((cand) => cand.smiles)
+        .map(async (cand) => ({ cand, props: await evaluateMolecule(cand.smiles) }))
+    );
+
+    for (const { cand, props } of evaluatedRaw) {
       // Skip molecules that violate rigid structural alerts if explicitly configured
-      const containsAvoidedAlerts = props.structural_alerts.some(alert => 
+      const containsAvoidedAlerts = props.structural_alerts.some(alert =>
          brief.must_avoid_alerts.some(avoid => alert.toLowerCase().includes(avoid.toLowerCase()))
       );
       if (containsAvoidedAlerts) {
@@ -928,7 +995,7 @@ app.post("/api/design-pipeline", async (req, res) => {
       // Fallback: Use some seed derivatives if filters eliminated everything
       const fallbackList = [seedStructure];
       for (const smi of fallbackList) {
-        const props = calculateProperties(smi);
+        const props = await evaluateMolecule(smi);
         evaluatedCandidates.push({
           ...props,
           name: "Direct Scaffold Reference",
@@ -1028,7 +1095,7 @@ app.post("/api/design-pipeline", async (req, res) => {
       brief,
       candidates: sortedCandidates,
       explanation,
-      seed_properties: calculateProperties(seedStructure),
+      seed_properties: await evaluateMolecule(seedStructure),
       seed_pubchem: seedPubChem
     });
 
@@ -1108,13 +1175,13 @@ app.post("/api/pubchem/batch", async (req, res) => {
 /**
  * API Route: Evaluate individual manual SMILES values
  */
-app.post("/api/evaluate", (req, res) => {
+app.post("/api/evaluate", async (req, res) => {
   const { smiles } = req.body;
   if (!smiles || typeof smiles !== "string") {
     return res.status(400).json({ error: "SMILES parameter is required as string." });
   }
   try {
-    const props = calculateProperties(smiles);
+    const props = await evaluateMolecule(smiles);
     res.json(props);
   } catch (e: any) {
     res.status(500).json({ error: e.message || "Invalid SMILES structure." });
@@ -1129,8 +1196,6 @@ app.post("/api/evaluate", (req, res) => {
  * the app keeps working on the built-in heuristic engine and the proxy replies
  * 503 so the client can fall back gracefully.
  */
-const SCIENCE_SERVICE_URL = process.env.SCIENCE_SERVICE_URL || "http://localhost:8000";
-
 app.all("/api/science/*", async (req, res) => {
   const subPath = req.path.replace(/^\/api\/science/, "");
   const target = `${SCIENCE_SERVICE_URL}${subPath}`;
