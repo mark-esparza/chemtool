@@ -53,6 +53,33 @@ export interface DesignBrief {
   notes: string;
 }
 
+/**
+ * Normalized compound record returned by every PubChem lookup path (live REST,
+ * AI fallback, built-in dataset, or generated placeholder). `is_estimated`
+ * tells the client whether the values are real data (false) or model/placeholder
+ * output (true) so the UI can flag them honestly.
+ */
+export interface CompoundRecord {
+  cid: number;
+  name: string;
+  iupac_name: string;
+  smiles: string;
+  formula: string;
+  mw: number | null;
+  clogp: number | null;
+  tpsa: number | null;
+  hbd: number | null;
+  hba: number | null;
+  rotatable_bonds: number | null;
+  description: string;
+  descriptionSource: string;
+  descriptionUrl: string;
+  synonyms: string[];
+  is_estimated: boolean;
+  reportUrl: string;
+  websiteReportEmbed: string;
+}
+
 const app = express();
 const PORT = 3000;
 
@@ -112,7 +139,7 @@ function getParetoFrontMask(costs: number[][]): boolean[] {
 /**
  * PubChem PUG REST emulator fallback powered by Gemini
  */
-async function getGeminiPubChemFallback(q: string) {
+async function getGeminiPubChemFallback(q: string): Promise<CompoundRecord> {
   try {
     const trimmed = q.trim();
     if (!trimmed) return null;
@@ -191,7 +218,7 @@ async function getGeminiPubChemFallback(q: string) {
  * High-fidelity, zero-dependency offline chemical databank fallback
  * Handles popular clinical molecules deterministically to resist any API outage.
  */
-function getLocalChemicalFallback(q: string) {
+function getLocalChemicalFallback(q: string): CompoundRecord {
   const norm = q.toLowerCase().trim();
   
   // High-fidelity pre-compiled dataset for common user queries
@@ -400,7 +427,7 @@ function getLocalChemicalFallback(q: string) {
 /**
  * PubChem PUG REST and Description helper with automatic fallback
  */
-async function fetchPubChemData(q: string) {
+async function fetchPubChemData(q: string): Promise<CompoundRecord | null> {
   const trimmed = q.trim();
   if (!trimmed) return null;
 
