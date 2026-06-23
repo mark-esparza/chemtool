@@ -560,7 +560,7 @@ export default function App() {
         <div className="p-6 border-b border-slate-100">
           <div className="flex items-center gap-2 mb-2">
             <span className="w-2.5 h-2.5 rounded-full bg-[#0A355C] shadow-[0_0_8px_rgba(10,53,92,0.4)] animate-pulse"></span>
-            <span className="text-[10px] font-mono uppercase tracking-widest text-[#0A355C] font-bold">NIH Active Link</span>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-[#0A355C] font-bold">Local Engine Active</span>
           </div>
           <h1 className="text-xl font-bold tracking-tight text-[#0A355C] italic underline underline-offset-4 decoration-[#0A355C] flex items-center gap-2">
             <Atom className="w-5 h-5 text-[#0A355C]" />
@@ -667,7 +667,7 @@ export default function App() {
         {/* TOP COMPILER BANNER */}
         <div className="p-6 sm:p-8 pb-4 flex flex-col">
           <div className="flex items-center gap-4 mb-3">
-            <div className="text-[11px] font-mono text-slate-500 uppercase tracking-wider">[NIH-STYLE MOLECULAR DESIGN SUITE]</div>
+            <div className="text-[11px] font-mono text-slate-500 uppercase tracking-wider">[MOLECULAR DESIGN SUITE — RESEARCH PROTOTYPE]</div>
             <div className="h-px flex-1 bg-slate-200"></div>
           </div>
           
@@ -851,7 +851,7 @@ export default function App() {
               <div className="flex items-center justify-between border-b border-slate-100 pb-3 select-none">
                 <div className="flex items-center gap-2.5">
                   <span className="bg-[#0A355C]/10 border border-[#0A355C]/35 text-[#0A355C] px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest">
-                    {activeCandidate.is_parent ? "SEED SCATTER" : `OPTIMIZED ANALOG #${candidates.indexOf(activeCandidate) + 1}`}
+                    {`OPTIMIZED ANALOG #${candidates.indexOf(activeCandidate) + 1}`}
                   </span>
                   {activeCandidate.is_pareto_optimal && (
                     <span className="bg-[#0A355C]/10 border border-[#0A355C]/35 text-[#0A355C] px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest flex items-center gap-1">
@@ -977,8 +977,8 @@ export default function App() {
                 <div className="flex items-start gap-3 bg-slate-100 p-3.5 rounded border border-slate-200/40 text-[11px] text-slate-500 leading-relaxed">
                   <CheckCircle2 className="w-5 h-5 text-[#0A355C] shrink-0 mt-0.5" />
                   <div>
-                    <span className="text-slate-800 font-bold block mb-0.5">Skeletal Verification Confirmed</span>
-                    <span>All calculations are computed mathematically using real atomic coordinates. Synthesis parameters are calculated dynamically to fit hard thermodynamic design boundaries.</span>
+                    <span className="text-slate-800 font-bold block mb-0.5">Heuristic Estimates — Not Lab-Validated</span>
+                    <span>Properties (cLogP, TPSA, QED, docking, etc.) are deterministic heuristics computed from the 2D structure graph, not experimental measurements or quantum/3D simulations. Treat them as rough estimates for prioritization only.</span>
                   </div>
                 </div>
               </div>

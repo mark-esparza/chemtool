@@ -88,6 +88,9 @@ export function parseSmiles(smiles: string): ChemGraph {
   
   let i = 0;
   let lastAtomId: number | null = null;
+  // Bond order declared by an explicit bond symbol (= or #) that applies to the
+  // NEXT bond formed. Persists across loop iterations until consumed.
+  let pendingBondOrder = 1;
   const len = smiles.length;
 
   while (i < len) {
@@ -112,14 +115,15 @@ export function parseSmiles(smiles: string): ChemGraph {
       continue;
     }
 
-    // Explicit bonds
-    let currentBondOrder = 1;
+    // Explicit bonds. These set the order for the next bond formed; the value
+    // must survive into a later loop iteration, so it lives in pendingBondOrder
+    // (a local reset here would silently discard every double/triple bond).
     if (char === "=") {
-      currentBondOrder = 2;
+      pendingBondOrder = 2;
       i++;
       continue;
     } else if (char === "#") {
-      currentBondOrder = 3;
+      pendingBondOrder = 3;
       i++;
       continue;
     } else if (char === "/") {
@@ -190,13 +194,15 @@ export function parseSmiles(smiles: string): ChemGraph {
 
     // If we have a preceding atom, bond to it
     if (lastAtomId !== null) {
-      const order = isAromatic && atoms[lastAtomId].isAromatic ? 1.5 : currentBondOrder;
+      const order = isAromatic && atoms[lastAtomId].isAromatic ? 1.5 : pendingBondOrder;
       bonds.push({
         atom1: lastAtomId,
         atom2: newAtom.id,
         order,
       });
     }
+    // The explicit bond order (if any) has now been consumed.
+    pendingBondOrder = 1;
 
     lastAtomId = newAtom.id;
 
