@@ -143,6 +143,10 @@ export default function StructureRenderer({
         node.z = radius * Math.sin(phi) * Math.sin(theta);
       });
 
+      // Index nodes by id once so the bond-attraction step is an O(1) lookup
+      // instead of an O(n) .find() inside the iteration loop below.
+      const nodeById = new Map(initialNodes.map((n) => [n.id, n] as const));
+
       // Run 3D Physical Constraint relaxation (3D spring layout solver)
       const iterations = 180;
       const k = 42; // Perfect spring rest length
@@ -180,8 +184,8 @@ export default function StructureRenderer({
 
         // B. Attraction along bond constraints in 3D
         for (const link of initialLinks) {
-          const n1 = initialNodes.find((n) => n.id === link.source);
-          const n2 = initialNodes.find((n) => n.id === link.target);
+          const n1 = nodeById.get(link.source);
+          const n2 = nodeById.get(link.target);
           if (!n1 || !n2) continue;
 
           const dx = n2.x - n1.x;
@@ -397,10 +401,13 @@ export default function StructureRenderer({
       }
   > = [];
 
+  // Index projected nodes by id so bond endpoints resolve in O(1).
+  const projectedById = new Map(projectedNodes.map((n) => [n.id, n] as const));
+
   // Add bonds to list
   links.forEach((link, idx) => {
-    const n1 = projectedNodes.find((n) => n.id === link.source);
-    const n2 = projectedNodes.find((n) => n.id === link.target);
+    const n1 = projectedById.get(link.source);
+    const n2 = projectedById.get(link.target);
     if (!n1 || !n2) return;
 
     // Depth is the average Z coordinate of the connected atoms

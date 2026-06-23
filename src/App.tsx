@@ -1222,13 +1222,17 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 3D Receptor Docking & Pocket Fitting */}
+                {/* Estimated binding profile (heuristic, not a real docking run) */}
                 <div className="pt-4 mt-4 border-t border-slate-100 text-left select-none">
-                  <div className="text-[10px] uppercase text-slate-450 mb-3 font-mono tracking-widest font-bold flex items-center gap-1">
+                  <div className="text-[10px] uppercase text-slate-450 mb-1 font-mono tracking-widest font-bold flex items-center gap-1">
                     <Activity className="w-3.5 h-3.5 text-blue-500" />
-                    <span>3D Receptor Docking Simulation</span>
+                    <span>Estimated Binding Profile</span>
                   </div>
-                  
+                  <div className="text-[9px] text-amber-700 font-mono mb-3 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span>Heuristic estimates from the 2D graph — not a real docking simulation.</span>
+                  </div>
+
                   <div className="space-y-2 text-[11px] font-mono bg-slate-50 p-2.5 rounded-lg border border-slate-205">
                     <div className="flex justify-between items-center pb-1.5 border-b border-slate-200/50 last:border-0 last:pb-0">
                       <span className="text-slate-400 text-[9px] uppercase tracking-wider">Target Protein</span>
@@ -1864,12 +1868,19 @@ export default function App() {
                     {/* NCBI Scientific Description card */}
                     <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 text-left">
                       <div className="flex justify-between items-center border-b border-slate-200 pb-2 mb-3 select-none">
-                        <span className="text-[10px] font-mono text-slate-550 uppercase tracking-widest font-bold text-[#0A355C]">NIH Scientific Description & Summary</span>
-                        {pubchemResponse.descriptionSource && (
-                          <span className="text-[9px] font-sans text-slate-400 bg-white border border-slate-200 rounded px-1.5 py-0.5">
-                            Source: {pubchemResponse.descriptionSource}
-                          </span>
-                        )}
+                        <span className="text-[10px] font-mono text-slate-550 uppercase tracking-widest font-bold text-[#0A355C]">Scientific Description & Summary</span>
+                        <div className="flex items-center gap-1.5">
+                          {pubchemResponse.is_estimated && (
+                            <span className="text-[9px] font-mono font-bold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-300 rounded px-1.5 py-0.5 flex items-center gap-1">
+                              <AlertTriangle className="w-2.5 h-2.5" /> Unverified estimate
+                            </span>
+                          )}
+                          {pubchemResponse.descriptionSource && (
+                            <span className="text-[9px] font-sans text-slate-400 bg-white border border-slate-200 rounded px-1.5 py-0.5">
+                              Source: {pubchemResponse.descriptionSource}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs text-slate-600 leading-relaxed font-serif italic">
                         "{pubchemResponse.description}"
@@ -2429,7 +2440,14 @@ export default function App() {
 
                       {/* dossier footer trigger action */}
                       <div className="pt-3 border-t border-slate-100 flex items-center justify-between select-none">
-                        <span className="text-[9px] text-slate-400 font-mono uppercase">Reference Source: {selectedBatchItem.descriptionSource || "NIH PubChem"}</span>
+                        <span className="text-[9px] text-slate-400 font-mono uppercase flex items-center gap-1.5">
+                          {selectedBatchItem.is_estimated && (
+                            <span className="text-amber-700 bg-amber-50 border border-amber-300 rounded px-1 py-0.5 not-italic font-bold flex items-center gap-1">
+                              <AlertTriangle className="w-2.5 h-2.5" /> Unverified
+                            </span>
+                          )}
+                          Reference Source: {selectedBatchItem.descriptionSource || "Unknown"}
+                        </span>
                         {selectedBatchItem.reportUrl && (
                           <a
                             href={selectedBatchItem.reportUrl}
