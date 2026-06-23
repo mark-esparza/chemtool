@@ -12,10 +12,28 @@ and establishes the prediction **provenance envelope** contract.
 | `/health` | GET | Liveness probe |
 | `/descriptors` | POST | Correct RDKit descriptors (MW, Crippen logP, TPSA, HBD/HBA, rotatable bonds, aromatic rings, QED, Lipinski/Veber violations) + canonical SMILES + InChIKey + PAINS/Brenk alerts |
 | `/similarity` | POST | Morgan/ECFP Tanimoto similarity between two molecules |
-| `/predict` | POST | **Contract stub.** Returns the provenance envelope (model family, uncertainty, applicability domain, nearest-neighbor evidence, confidence grade). No model is trained yet — the body is a placeholder so the client and UI can be built against the final shape. |
+| `/endpoints` | GET | Lists endpoints that have a trained QSAR model |
+| `/predict` | POST | QSAR prediction in the provenance envelope (value, model family, uncertainty, applicability domain, nearest-neighbor evidence, confidence grade). Trained endpoints return real values; unknown endpoints return a well-formed "not implemented" envelope |
+| `/evidence` | POST | Nearest measured analogs for a molecule from an endpoint's reference dataset (real measured values + Tanimoto) |
 
-Deterministic descriptor responses carry `is_estimated: false`; everything from
-`/predict` carries `is_estimated: true` until real models land (ROADMAP step 3).
+Deterministic descriptor responses carry `is_estimated: false`; predictions
+carry `is_estimated: true` and a confidence grade.
+
+## Models & data
+
+| Endpoint | Model | Reference dataset |
+| --- | --- | --- |
+| `solubility_logS` | RandomForest on ECFP4 (Morgan, 2048-bit), scikit-learn | Delaney **ESOL** (2004), 1128 compounds, measured aqueous log-solubility — `data/esol_solubility.csv` |
+
+Each prediction reports:
+- **value** — RandomForest ensemble mean
+- **uncertainty** — spread across the forest's trees (~95% band)
+- **applicability domain** — Tanimoto to the nearest training compound; below
+  0.35 the prediction is flagged out-of-domain and graded down
+- **nearest-neighbor evidence** — the closest *measured* compound and its value
+
+This is a deliberately simple baseline (ROADMAP step 3); it never claims grade A.
+The model trains lazily on first request and is cached in memory.
 
 ## Run locally
 

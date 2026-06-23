@@ -12,18 +12,16 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import chemistry
+from . import chemistry, qsar
 from .schemas import (
-    ApplicabilityDomain,
-    ConfidenceGrade,
     DescriptorResult,
-    ModelInfo,
+    EvidenceRequest,
+    EvidenceResult,
     PredictRequest,
     PredictionResult,
     SimilarityRequest,
     SimilarityResult,
     SmilesRequest,
-    Uncertainty,
 )
 
 app = FastAPI(
@@ -66,31 +64,30 @@ def similarity(req: SimilarityRequest) -> SimilarityResult:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+@app.get("/endpoints")
+def endpoints() -> dict:
+    """List endpoints with a trained QSAR model."""
+    return {"endpoints": qsar.supported_endpoints()}
+
+
 @app.post("/predict", response_model=PredictionResult)
 def predict(req: PredictRequest) -> PredictionResult:
-    """Contract stub for QSAR/ADMET endpoints.
+    """QSAR/ADMET prediction wrapped in the provenance envelope.
 
-    Validates the molecule with RDKit, then returns the provenance envelope with
-    a placeholder model so downstream code can integrate against the final shape.
-    Replace the body with a real trained model per ROADMAP build step 3.
+    Endpoints with a trained model (see /endpoints) return a real RandomForest
+    read-across value with uncertainty, applicability domain, and nearest-neighbor
+    evidence. Unknown endpoints return a well-formed "not implemented" envelope.
     """
     try:
-        chemistry.compute_descriptors(req.smiles)  # validate SMILES
+        return qsar.predict(req.endpoint, req.smiles)
     except chemistry.InvalidSmilesError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    return PredictionResult(
-        endpoint=req.endpoint,
-        value=None,
-        unit="",
-        model=ModelInfo(family="not_implemented", version="0.0.0", trained_on="none"),
-        uncertainty=Uncertainty(interval=None, method="n/a"),
-        applicability_domain=ApplicabilityDomain(
-            in_domain=False,
-            nearest_neighbor=None,
-            note="No model trained yet for this endpoint.",
-        ),
-        confidence_grade=ConfidenceGrade.D,
-        is_estimated=True,
-        note="Prediction model not implemented; this is the contract shape only.",
-    )
+
+@app.post("/evidence", response_model=EvidenceResult)
+def evidence(req: EvidenceRequest) -> EvidenceResult:
+    """Nearest measured analogs for a molecule from an endpoint's reference set."""
+    try:
+        return qsar.evidence(req.endpoint, req.smiles, k=req.k)
+    except chemistry.InvalidSmilesError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))

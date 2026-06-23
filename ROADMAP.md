@@ -103,9 +103,12 @@ analog" evidence row, in/out-of-domain warning).
 2. **Nearest-neighbor evidence** — index ChEMBL / TDC / CompTox by InChIKey;
    return the closest *measured* analog by fingerprint similarity. Cheap,
    high-trust grounding.
-3. **Baseline QSAR** — XGBoost / LightGBM on Morgan FP for a handful of
-   high-value TDC ADMET endpoints (BBB, hERG, CYP inhibition, AMES, Caco-2,
-   LD50) with conformal uncertainty + applicability domain.
+3. **Baseline QSAR** — _in progress._ A RandomForest (ECFP4, scikit-learn) is
+   live for aqueous solubility (`solubility_logS`), trained on the measured
+   Delaney ESOL dataset, with ensemble-variance uncertainty, Tanimoto
+   applicability domain, and nearest-neighbor evidence served via `/predict` and
+   `/evidence`. Still to do: more endpoints (BBB, hERG, CYP, AMES, Caco-2, LD50)
+   from TDC, conformal intervals, and held-out validation metrics per endpoint.
 4. **Provenance / confidence panel** in the UI — extend `is_estimated` into the
    full envelope above.
 5. **Chemprop v2** for endpoints where the MPNN beats baselines.

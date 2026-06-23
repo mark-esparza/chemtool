@@ -32,7 +32,13 @@ class SimilarityRequest(BaseModel):
 
 class PredictRequest(BaseModel):
     smiles: str = Field(..., min_length=1)
-    endpoint: str = Field(..., description="ADMET/QSAR endpoint id, e.g. 'BBB_penetration'")
+    endpoint: str = Field(..., description="ADMET/QSAR endpoint id, e.g. 'solubility_logS'")
+
+
+class EvidenceRequest(BaseModel):
+    smiles: str = Field(..., min_length=1)
+    endpoint: str = Field(..., description="Endpoint whose reference set to search")
+    k: int = Field(3, ge=1, le=10, description="Number of nearest neighbors to return")
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +111,19 @@ class NearestNeighbor(BaseModel):
     smiles: str
     tanimoto: float
     measured_value: Optional[float] = None
+    name: str = ""
     source: str = Field(..., description="Provenance of the measured value, e.g. ChEMBL/CompTox")
+
+
+class EvidenceResult(BaseModel):
+    """Real measured nearest neighbors for a query molecule — the 'evidence'
+    half of the integrity rule, returned independently of any model."""
+
+    endpoint: str
+    query_smiles: str
+    unit: str
+    source: str
+    neighbors: list[NearestNeighbor] = Field(default_factory=list)
 
 
 class ApplicabilityDomain(BaseModel):
