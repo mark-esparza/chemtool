@@ -61,6 +61,10 @@ interface Candidate extends MolecularProperties {
   is_pareto_optimal: boolean;
   total_cost: number;
   ood_flag: boolean;
+  // Which engine produced the descriptors: the RDKit science service (real
+  // values) or the built-in heuristic fallback. Undefined for seed sample data.
+  descriptor_source?: "rdkit" | "heuristic";
+  inchikey?: string;
 }
 
 // Full sample dataset representing first-load state
@@ -861,6 +865,15 @@ export default function App() {
                   {activeCandidate.ood_flag && (
                     <span className="bg-amber-500/10 border border-amber-500/30 text-amber-500 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest">
                       OOD BOUNDS OVER step
+                    </span>
+                  )}
+                  {activeCandidate.descriptor_source === "rdkit" ? (
+                    <span className="bg-emerald-50 border border-emerald-300 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest flex items-center gap-1" title="Descriptors computed by the RDKit science service">
+                      <CheckCircle2 className="w-3 h-3" /> RDKit verified
+                    </span>
+                  ) : (
+                    <span className="bg-amber-50 border border-amber-300 text-amber-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest flex items-center gap-1" title="RDKit service unavailable — values are heuristic estimates from the 2D graph">
+                      <AlertTriangle className="w-3 h-3" /> Heuristic estimate
                     </span>
                   )}
                 </div>
