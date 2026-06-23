@@ -1,0 +1,32 @@
+# Runs the full two-stack app: the Node/Express UI and the Python RDKit service.
+#   docker compose up --build
+# App:     http://localhost:3000
+# Science: http://localhost:8000  (docs at /docs)
+services:
+  science:
+    build: ./science-service
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Reach the science service over the compose network.
+      - SCIENCE_SERVICE_URL=http://science:8000
+      # Optional — the app falls back to local logic when unset.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      science:
+        condition: service_healthy

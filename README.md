@@ -62,6 +62,22 @@ front, and writes an explainable report.
    ```
    Then open http://localhost:3000.
 
+## Run both services with Docker
+
+The app and the RDKit science service run together via Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+- App: http://localhost:3000
+- Science service: http://localhost:8000 (docs at `/docs`)
+
+The app reaches the science service over the compose network
+(`SCIENCE_SERVICE_URL=http://science:8000`) and waits for its health check.
+`GEMINI_API_KEY` is read from the environment if set; otherwise the app falls
+back to local logic.
+
 ## Scripts
 
 | Command         | Description                                            |

@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+coverage
+.git
+.gitignore
+*.log
+.env*
+!.env.example
+science-service
+**/__pycache__
+**/.pytest_cache
+**/.venv
