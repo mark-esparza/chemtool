@@ -21,7 +21,7 @@ def test_predict_solubility_envelope_shape():
     assert res.endpoint == "solubility_logS"
     assert res.unit == "log(mol/L)"
     assert res.value is not None
-    assert res.model.family.startswith("RandomForest")
+    assert res.model.family.startswith("HistGradientBoosting")
     # Envelope is fully populated.
     assert res.uncertainty.interval is not None and len(res.uncertainty.interval) == 2
     assert res.applicability_domain.nearest_neighbor is not None

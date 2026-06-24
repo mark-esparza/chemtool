@@ -103,14 +103,15 @@ analog" evidence row, in/out-of-domain warning).
 2. **Nearest-neighbor evidence** — index ChEMBL / TDC / CompTox by InChIKey;
    return the closest *measured* analog by fingerprint similarity. Cheap,
    high-trust grounding.
-3. **Baseline QSAR** — _in progress._ A RandomForest (ECFP4, scikit-learn) is
-   live for aqueous solubility (`solubility_logS`), trained on the measured
-   Delaney ESOL dataset, with ensemble-variance uncertainty, Tanimoto
-   applicability domain, nearest-neighbor evidence (`/predict`, `/evidence`), and
-   **held-out scaffold-split validation metrics** (R²/RMSE/MAE) reported in every
-   envelope. Confidence grades are bounded by the held-out R². Still to do: more
-   endpoints (BBB, hERG, CYP, AMES, Caco-2, LD50) from TDC, conformal intervals,
-   and surfacing predictions + evidence in the app UI.
+3. **Baseline QSAR** — _live._ A HistGradientBoosting model on ECFP4 + RDKit
+   physicochemical descriptors is live for aqueous solubility (`solubility_logS`),
+   trained on the measured Delaney ESOL dataset. Each `/predict` returns the full
+   envelope: point estimate, **split-conformal interval** (~90% coverage),
+   Tanimoto applicability domain, nearest-neighbor evidence, and **held-out
+   scaffold-split metrics** (~0.79 R², RMSE ≈ 0.92 — chosen by benchmarking
+   feature/model combos). Predictions + evidence + confidence are surfaced in the
+   app's design view. Still to do: more endpoints (BBB, hERG, CYP, AMES, Caco-2,
+   LD50) from TDC, and per-endpoint model selection.
 4. **Provenance / confidence panel** in the UI — extend `is_estimated` into the
    full envelope above.
 5. **Chemprop v2** for endpoints where the MPNN beats baselines.

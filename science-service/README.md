@@ -23,11 +23,12 @@ carry `is_estimated: true` and a confidence grade.
 
 | Endpoint | Model | Reference dataset |
 | --- | --- | --- |
-| `solubility_logS` | RandomForest on ECFP4 (Morgan, 2048-bit), scikit-learn | Delaney **ESOL** (2004), 1128 compounds, measured aqueous log-solubility — `data/esol_solubility.csv` |
+| `solubility_logS` | HistGradientBoosting on ECFP4 (Morgan, 2048-bit) **+ RDKit physicochemical descriptors**, scikit-learn | Delaney **ESOL** (2004), 1128 compounds, measured aqueous log-solubility — `data/esol_solubility.csv` |
 
 Each prediction reports:
-- **value** — RandomForest ensemble mean
-- **uncertainty** — spread across the forest's trees (~95% band)
+- **value** — gradient-boosting point estimate
+- **uncertainty** — **split-conformal** interval (~90% marginal coverage),
+  calibrated on a held-out residual quantile
 - **applicability domain** — Tanimoto to the nearest training compound; below
   0.35 the prediction is flagged out-of-domain and graded down
 - **nearest-neighbor evidence** — the closest *measured* compound and its value
@@ -35,12 +36,16 @@ Each prediction reports:
   honest than a random split, which leaks analogs across the boundary), reported
   in `model.validation` on every prediction
 
+Model and features were chosen by benchmarking combinations on the same scaffold
+split: GBM + ECFP + descriptors scores **~0.79 R² (RMSE ≈ 0.92 log units)**,
+versus ~0.31 for plain RF on raw fingerprints — physicochemical descriptors
+generalize across scaffolds far better than substructure bits for solubility.
+
 Confidence grading reflects this honestly: a query that (near-)matches a
 measured compound is graded by read-across; otherwise the grade is bounded by
-the model's held-out R². The current solubility model scores ~0.31 R² on the
-scaffold split (RMSE ≈ 1.7 log units) — a usable prioritization signal, not a
-substitute for measurement. It never claims grade A. The model trains lazily on
-first request and is cached in memory.
+the model's held-out R². It is a usable prioritization signal, not a substitute
+for measurement, and never claims grade A. The model trains lazily on first
+request and is cached in memory.
 
 ## Run locally
 
