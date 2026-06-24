@@ -308,6 +308,119 @@ function ScientificMarkdownRenderer({ text }: { text: string }) {
   );
 }
 
+// QSAR prediction panel for a candidate, backed by the RDKit science service.
+// Self-contained: fetches its own prediction + measured-analog evidence and
+// degrades gracefully when the service is offline (proxy returns 503).
+function QsarPredictionCard({ smiles }: { smiles: string }) {
+  const [pred, setPred] = useState<any>(null);
+  const [neighbors, setNeighbors] = useState<any[]>([]);
+  const [status, setStatus] = useState<"loading" | "ok" | "offline">("loading");
+
+  useEffect(() => {
+    if (!smiles) return;
+    let cancelled = false;
+    setStatus("loading");
+    (async () => {
+      try {
+        const body = JSON.stringify({ smiles, endpoint: "solubility_logS", k: 3 });
+        const [pRes, eRes] = await Promise.all([
+          fetch("/api/science/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body }),
+          fetch("/api/science/evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body }),
+        ]);
+        if (pRes.status === 503 || !pRes.ok) {
+          if (!cancelled) { setStatus("offline"); setPred(null); setNeighbors([]); }
+          return;
+        }
+        const p = await pRes.json();
+        const e = eRes.ok ? await eRes.json() : null;
+        if (!cancelled) { setPred(p); setNeighbors(e?.neighbors || []); setStatus("ok"); }
+      } catch {
+        if (!cancelled) setStatus("offline");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [smiles]);
+
+  const gradeClasses = (g: string) =>
+    g === "A" || g === "B"
+      ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+      : g === "C"
+      ? "bg-amber-50 border-amber-300 text-amber-700"
+      : "bg-rose-50 border-rose-300 text-rose-700";
+
+  return (
+    <div className="pt-4 mt-4 border-t border-slate-100 text-left select-none">
+      <div className="text-[10px] uppercase text-slate-450 mb-2 font-mono tracking-widest font-bold flex items-center gap-1">
+        <Activity className="w-3.5 h-3.5 text-blue-500" />
+        <span>Predicted Aqueous Solubility (QSAR)</span>
+      </div>
+
+      {status === "loading" && (
+        <div className="text-[11px] font-mono text-slate-400 animate-pulse">Querying model…</div>
+      )}
+
+      {status === "offline" && (
+        <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded p-2 leading-relaxed font-mono">
+          Prediction service offline. Start <span className="text-slate-700 font-bold">science-service</span> (see its README) to enable QSAR predictions with uncertainty and measured-analog evidence.
+        </div>
+      )}
+
+      {status === "ok" && pred && (
+        <div className="space-y-2.5">
+          <div className="flex items-end justify-between bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <div>
+              <span className="text-[9px] uppercase font-mono text-slate-400 tracking-wider block">logS prediction</span>
+              <span className="text-xl font-bold font-mono text-[#0A355C]">{pred.value}</span>
+              <span className="text-[10px] text-slate-500 font-mono ml-1">{pred.unit}</span>
+              {pred.uncertainty?.interval && (
+                <span className="block text-[9.5px] text-slate-400 font-mono mt-0.5">
+                  95% band [{pred.uncertainty.interval[0]}, {pred.uncertainty.interval[1]}]
+                </span>
+              )}
+            </div>
+            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest border ${gradeClasses(pred.confidence_grade)}`}>
+              Grade {pred.confidence_grade}
+            </span>
+          </div>
+
+          <div className="flex items-start gap-2 text-[10px] font-mono">
+            {pred.applicability_domain?.in_domain ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+            )}
+            <span className="text-slate-500 leading-relaxed">{pred.applicability_domain?.note}</span>
+          </div>
+
+          {pred.model?.validation && (
+            <div className="text-[9.5px] font-mono text-slate-400 bg-white border border-slate-200 rounded p-2 leading-relaxed">
+              <span className="text-slate-600 font-bold">{pred.model.family}</span> · held-out ({pred.model.validation.split}): R²={pred.model.validation.r2}, RMSE={pred.model.validation.rmse}
+            </div>
+          )}
+
+          {neighbors.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded p-2">
+              <span className="text-[8.5px] uppercase font-bold text-[#0A355C] tracking-wide block mb-1">Nearest measured analogs (evidence)</span>
+              <div className="space-y-1">
+                {neighbors.map((n, i) => (
+                  <div key={i} className="flex items-center justify-between text-[10px] font-mono gap-2">
+                    <span className="text-slate-600 truncate" title={n.smiles}>{n.name || n.smiles}</span>
+                    <span className="text-slate-400 shrink-0">T={n.tanimoto} · logS {n.measured_value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <p className="text-[9px] text-slate-400 italic leading-relaxed">
+            Baseline RandomForest read-across — a prioritization signal, not a measurement. Source: {pred.model?.trained_on}.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [prompt, setPrompt] = useState("A more soluble, easier-to-synthesize aspirin analog that stays under 400 Da.");
   const [numSamples, setNumSamples] = useState(15);
@@ -1295,6 +1408,9 @@ export default function App() {
                     </div>
                   )}
                 </div>
+
+                {/* Real QSAR prediction + measured-analog evidence (science service) */}
+                <QsarPredictionCard smiles={activeCandidate.smiles} />
 
                 {/* Suggested Tests */}
                 <div className="pt-4 mt-4 border-t border-slate-100 text-left select-none">
