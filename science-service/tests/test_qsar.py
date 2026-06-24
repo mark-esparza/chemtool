@@ -28,6 +28,8 @@ def test_predict_solubility_envelope_shape():
     assert 0.0 <= res.applicability_domain.nearest_neighbor.tanimoto <= 1.0
     # Ethanol is well inside a solubility dataset's domain.
     assert res.applicability_domain.in_domain is True
+    # It (near-)matches a measured compound, so it is read-across, not extrapolation.
+    assert res.confidence_grade != ConfidenceGrade.D
 
 
 def test_predict_orders_soluble_above_insoluble():
@@ -36,6 +38,18 @@ def test_predict_orders_soluble_above_insoluble():
     # Higher logS == more soluble. The model should rank ethanol well above a
     # long alkane even if absolute values are approximate.
     assert soluble > greasy
+
+
+def test_prediction_carries_holdout_validation_metrics():
+    res = qsar.predict("solubility_logS", "CCO")
+    v = res.model.validation
+    assert v is not None
+    assert v.split == "scaffold"
+    assert v.n_train > 0 and v.n_test > 0
+    # ESOL is a well-behaved solubility set; a scaffold-split RF should be
+    # clearly predictive (R^2 well above zero) without being suspiciously perfect.
+    assert 0.3 < v.r2 < 0.95
+    assert v.rmse > 0 and v.mae > 0
 
 
 def test_unknown_endpoint_returns_not_implemented_envelope():

@@ -31,9 +31,16 @@ Each prediction reports:
 - **applicability domain** — Tanimoto to the nearest training compound; below
   0.35 the prediction is flagged out-of-domain and graded down
 - **nearest-neighbor evidence** — the closest *measured* compound and its value
+- **held-out validation** — R²/RMSE/MAE on a **scaffold split** (harder and more
+  honest than a random split, which leaks analogs across the boundary), reported
+  in `model.validation` on every prediction
 
-This is a deliberately simple baseline (ROADMAP step 3); it never claims grade A.
-The model trains lazily on first request and is cached in memory.
+Confidence grading reflects this honestly: a query that (near-)matches a
+measured compound is graded by read-across; otherwise the grade is bounded by
+the model's held-out R². The current solubility model scores ~0.31 R² on the
+scaffold split (RMSE ≈ 1.7 log units) — a usable prioritization signal, not a
+substitute for measurement. It never claims grade A. The model trains lazily on
+first request and is cached in memory.
 
 ## Run locally
 

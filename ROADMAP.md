@@ -106,9 +106,11 @@ analog" evidence row, in/out-of-domain warning).
 3. **Baseline QSAR** — _in progress._ A RandomForest (ECFP4, scikit-learn) is
    live for aqueous solubility (`solubility_logS`), trained on the measured
    Delaney ESOL dataset, with ensemble-variance uncertainty, Tanimoto
-   applicability domain, and nearest-neighbor evidence served via `/predict` and
-   `/evidence`. Still to do: more endpoints (BBB, hERG, CYP, AMES, Caco-2, LD50)
-   from TDC, conformal intervals, and held-out validation metrics per endpoint.
+   applicability domain, nearest-neighbor evidence (`/predict`, `/evidence`), and
+   **held-out scaffold-split validation metrics** (R²/RMSE/MAE) reported in every
+   envelope. Confidence grades are bounded by the held-out R². Still to do: more
+   endpoints (BBB, hERG, CYP, AMES, Caco-2, LD50) from TDC, conformal intervals,
+   and surfacing predictions + evidence in the app UI.
 4. **Provenance / confidence panel** in the UI — extend `is_estimated` into the
    full envelope above.
 5. **Chemprop v2** for endpoints where the MPNN beats baselines.

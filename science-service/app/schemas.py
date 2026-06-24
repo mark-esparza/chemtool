@@ -94,10 +94,23 @@ class ConfidenceGrade(str, Enum):
     D = "D"  # out-of-domain or high uncertainty — treat with caution
 
 
+class ValidationMetrics(BaseModel):
+    """Held-out performance for the model behind a prediction. Computed on a
+    scaffold split (harder and more honest than a random split for QSAR)."""
+
+    split: str = Field(..., description="e.g. 'scaffold' or 'random'")
+    n_train: int
+    n_test: int
+    r2: float
+    rmse: float
+    mae: float
+
+
 class ModelInfo(BaseModel):
     family: str = Field(..., description="e.g. XGBoost, Chemprop-MPNN, RandomForest")
     version: str
     trained_on: str = Field(..., description="Dataset id, e.g. TDC/BBB_Martins")
+    validation: Optional[ValidationMetrics] = None
 
 
 class Uncertainty(BaseModel):

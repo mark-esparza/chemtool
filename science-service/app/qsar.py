@@ -25,7 +25,9 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import DataStructs
 from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
+from rdkit.Chem.Scaffolds import MurckoScaffold
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from .chemistry import InvalidSmilesError
 from .schemas import (
@@ -36,6 +38,7 @@ from .schemas import (
     NearestNeighbor,
     PredictionResult,
     Uncertainty,
+    ValidationMetrics,
 )
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -84,6 +87,56 @@ class _TrainedModel:
     smiles: list[str]
     values: list[float]
     spec: EndpointSpec
+    metrics: ValidationMetrics
+
+
+def _scaffold(smiles: str) -> str:
+    try:
+        return MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles, includeChirality=False)
+    except Exception:
+        return ""
+
+
+def _scaffold_split(smiles_list: list[str], frac_test: float = 0.2) -> tuple[list[int], list[int]]:
+    """Deterministic scaffold split: common scaffolds go to train, leaving rarer
+    ones for test. Harder than a random split and a fairer generalization check
+    because structural analogs cannot straddle the train/test boundary."""
+    groups: dict[str, list[int]] = {}
+    for i, smi in enumerate(smiles_list):
+        groups.setdefault(_scaffold(smi), []).append(i)
+    # Largest scaffold groups first so they land in train.
+    ordered = sorted(groups.values(), key=len, reverse=True)
+    n_train_target = len(smiles_list) - int(frac_test * len(smiles_list))
+    train_idx: list[int] = []
+    test_idx: list[int] = []
+    for group in ordered:
+        if len(train_idx) + len(group) <= n_train_target:
+            train_idx.extend(group)
+        else:
+            test_idx.extend(group)
+    return train_idx, test_idx
+
+
+def _validate(X: np.ndarray, y: np.ndarray, smiles_list: list[str]) -> ValidationMetrics:
+    train_idx, test_idx = _scaffold_split(smiles_list)
+    # Degenerate guard (tiny datasets): fall back to reporting train fit.
+    if not test_idx or not train_idx:
+        train_idx = list(range(len(y)))
+        test_idx = train_idx
+        split = "train-fit (dataset too small to split)"
+    else:
+        split = "scaffold"
+    model = RandomForestRegressor(n_estimators=200, random_state=0, n_jobs=-1)
+    model.fit(X[train_idx], y[train_idx])
+    pred = model.predict(X[test_idx])
+    return ValidationMetrics(
+        split=split,
+        n_train=len(train_idx),
+        n_test=len(test_idx),
+        r2=round(float(r2_score(y[test_idx], pred)), 3),
+        rmse=round(float(np.sqrt(mean_squared_error(y[test_idx], pred))), 3),
+        mae=round(float(mean_absolute_error(y[test_idx], pred)), 3),
+    )
 
 
 @lru_cache(maxsize=None)
@@ -116,9 +169,11 @@ def _model_for(endpoint: str) -> _TrainedModel:
 
     X = np.asarray(rows, dtype=np.int8)
     y = np.asarray(values, dtype=float)
+    # Held-out metrics first (scaffold split), then deploy on the full dataset.
+    metrics = _validate(X, y, smiles_list)
     rf = RandomForestRegressor(n_estimators=200, random_state=0, n_jobs=-1)
     rf.fit(X, y)
-    return _TrainedModel(rf, fps, names, smiles_list, values, spec)
+    return _TrainedModel(rf, fps, names, smiles_list, values, spec, metrics)
 
 
 def _parse(smiles: str) -> Chem.Mol:
@@ -128,12 +183,21 @@ def _parse(smiles: str) -> Chem.Mol:
     return mol
 
 
-def _grade(max_sim: float, std: float) -> ConfidenceGrade:
+def _grade(max_sim: float, std: float, r2: float) -> ConfidenceGrade:
+    # A near-identical measured analog: confidence is read-across from real data,
+    # so it does not depend on how well the model generalizes elsewhere.
+    if max_sim >= 0.9:
+        return ConfidenceGrade.B
+    # Far from any measured compound: extrapolation, not trustworthy.
     if max_sim < AD_THRESHOLD:
         return ConfidenceGrade.D
-    if max_sim >= 0.6 and std <= 0.75:
+    # In-domain: the grade is bounded by how well the model actually generalizes
+    # (held-out R^2) and by ensemble agreement.
+    if r2 >= 0.6 and std <= 0.75:
         return ConfidenceGrade.B
-    return ConfidenceGrade.C
+    if r2 >= 0.4 or max_sim >= 0.6:
+        return ConfidenceGrade.C
+    return ConfidenceGrade.D
 
 
 def supported_endpoints() -> list[str]:
@@ -205,6 +269,7 @@ def predict(endpoint: str, smiles: str) -> PredictionResult:
             family="RandomForest (ECFP4, scikit-learn)",
             version="0.1.0",
             trained_on=model.spec.source,
+            validation=model.metrics,
         ),
         uncertainty=Uncertainty(
             interval=[round(value - 1.96 * std, 3), round(value + 1.96 * std, 3)],
@@ -218,7 +283,7 @@ def predict(endpoint: str, smiles: str) -> PredictionResult:
                 f"({'in' if in_domain else 'OUT OF'} domain, threshold {AD_THRESHOLD})."
             ),
         ),
-        confidence_grade=_grade(max_sim, std),
+        confidence_grade=_grade(max_sim, std, model.metrics.r2),
         is_estimated=True,
         note="Baseline RandomForest read-across; treat as a prioritization signal.",
     )
