@@ -17,6 +17,7 @@ import {
   classifyReaction,
   estimateEnergetics,
   lookupKnownReaction,
+  predictProducts,
   formatEquation,
   ReactionType,
 } from "./src/lib/reactionEngine.js";
@@ -1098,47 +1099,6 @@ app.post("/api/evaluate", (req, res) => {
 });
 
 /**
- * Gemini-powered product predictor for arbitrary reactant sets.
- * Returns predicted product formulas plus qualitative reaction metadata, which
- * are then verified and balanced deterministically by the local engine.
- */
-async function predictReactionWithGemini(reactants: string[], conditions: string) {
-  const response = await ai.models.generateContent({
-    model: "gemini-3.5-flash",
-    contents: `You are an expert chemistry reaction predictor for a student simulator. Given the reactants below, determine the single most likely reaction and its products.
-
-Reactants: ${reactants.join(" + ")}
-${conditions ? `Conditions: ${conditions}` : "Conditions: standard (assume ignition for combustion candidates)"}
-
-Rules:
-- Use plain chemical formulas WITHOUT coefficients (e.g. "H2O", "CO2", "Fe2O3", "Ca(OH)2"). Do NOT include leading numbers; balancing is handled separately.
-- If the reactants do not react under reasonable conditions, set "reaction_occurs" to false and leave products empty.
-- Products and reactants must be mass-consistent (same elements present).
-- Give the reaction_type from: Combustion, Synthesis (Combination), Decomposition, Single Displacement, Double Displacement (Metathesis), Acid-Base Neutralization, Precipitation, Redox.
-- States use s, l, g, or aq.`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        required: ["reaction_occurs", "products", "reaction_type", "observations"],
-        properties: {
-          reaction_occurs: { type: Type.BOOLEAN },
-          products: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Product formulas without coefficients" },
-          product_states: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Physical state of each product (s/l/g/aq)" },
-          reactant_states: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Physical state of each reactant (s/l/g/aq)" },
-          reaction_type: { type: Type.STRING },
-          observations: { type: Type.STRING, description: "What a student would observe (colour, gas, precipitate, temperature, light)." },
-          conditions: { type: Type.STRING, description: "Required conditions (heat, catalyst, pressure) if any." },
-          hazards: { type: Type.STRING, description: "Key laboratory safety notes for these chemicals." },
-          mechanism: { type: Type.STRING, description: "Short 2-3 sentence explanation of what happens at the molecular level." },
-        },
-      },
-    },
-  });
-  return JSON.parse(response.text.trim());
-}
-
-/**
  * Build a Markdown analysis report describing the reaction for a chemistry student.
  */
 function buildReactionReport(params: {
@@ -1153,17 +1113,18 @@ function buildReactionReport(params: {
   energetics: { character: string; estimatedDeltaH: number; note: string };
   species: Array<{ formula: string; role: string; coefficient: number; molarMass: number | null }>;
   reactionOccurs: boolean;
+  reason?: string;
 }): string {
   const {
     equation, balanced, balanceReason, type, observations, conditions,
-    mechanism, hazards, energetics, species, reactionOccurs,
+    mechanism, hazards, energetics, species, reactionOccurs, reason,
   } = params;
 
   if (!reactionOccurs) {
     return `## Reaction Prediction
 **No reaction is predicted** between the specified reactants under the given conditions.
 
-Not all combinations of chemicals react. This may be because the species are chemically inert toward one another, both are stable at these conditions, or a driving force (formation of a gas, precipitate, water, or a favourable electron transfer) is absent.
+${reason || "Not all combinations of chemicals react. This may be because the species are chemically inert toward one another, both are stable at these conditions, or a driving force (formation of a gas, precipitate, water, or a favourable electron transfer) is absent."}
 
 **Suggestion:** try adjusting the conditions (add heat, a catalyst, or change concentration) or pair the reactant with a more reactive partner.`;
   }
@@ -1248,6 +1209,7 @@ app.post("/api/reaction/simulate", async (req, res) => {
     let reactionOccurs = true;
     let source = "knowledge-base";
 
+    let predictionReason: string | undefined;
     const known = lookupKnownReaction(reactants);
     if (known) {
       products = known.products;
@@ -1259,34 +1221,29 @@ app.post("/api/reaction/simulate", async (req, res) => {
         productStates = known.states.slice(reactants.length);
       }
     } else {
-      try {
-        const g = await predictReactionWithGemini(reactants, conditionStr);
-        source = "gemini";
-        reactionOccurs = g.reaction_occurs !== false;
-        products = Array.isArray(g.products) ? g.products.map((p: any) => String(p).trim()).filter(Boolean) : [];
-        productStates = Array.isArray(g.product_states) ? g.product_states : [];
-        reactantStates = Array.isArray(g.reactant_states) ? g.reactant_states : [];
-        type = g.reaction_type || "Unclassified";
-        observations = g.observations || "";
-        mechanism = g.mechanism || "";
-        hazards = g.hazards || "";
-        predictedConditions = conditionStr || g.conditions || "";
-        // Validate predicted product formulas; drop unparseable ones.
-        products = products.filter((p) => {
-          try {
-            parseFormula(p);
-            return true;
-          } catch {
-            return false;
-          }
-        });
-        if (products.length === 0) reactionOccurs = false;
-      } catch (err: any) {
-        console.warn("[Reaction] Gemini predictor unavailable, using deterministic classifier only. Reason:", err?.message || err);
-        source = "offline-classifier";
-        reactionOccurs = false;
-        observations = "Product prediction service is unavailable and this reactant set is not in the offline knowledge base. Provide the expected products to balance and analyze the equation.";
-      }
+      // Deterministic rule-based prediction — no external model involved.
+      const p = predictProducts(reactants, conditionStr);
+      source = "deterministic-engine";
+      reactionOccurs = p.reactionOccurs;
+      products = p.products;
+      productStates = p.productStates;
+      reactantStates = p.reactantStates;
+      type = p.type;
+      observations = p.observations;
+      mechanism = p.mechanism || "";
+      hazards = p.hazards || "";
+      predictedConditions = conditionStr || p.conditions || "";
+      predictionReason = p.reason;
+      // Validate predicted product formulas; drop anything unparseable.
+      products = products.filter((prod) => {
+        try {
+          parseFormula(prod);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (reactionOccurs && products.length === 0) reactionOccurs = false;
     }
 
     // Deterministic balancing + verification.
@@ -1349,6 +1306,7 @@ app.post("/api/reaction/simulate", async (req, res) => {
       energetics,
       species,
       reactionOccurs,
+      reason: predictionReason,
     });
 
     return res.json({
@@ -1357,6 +1315,7 @@ app.post("/api/reaction/simulate", async (req, res) => {
       products,
       balanced,
       balance_reason: balanceReason,
+      reason: predictionReason,
       coefficients,
       equation,
       reaction_type: type,

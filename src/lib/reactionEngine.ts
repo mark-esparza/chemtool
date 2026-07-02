@@ -759,6 +759,573 @@ export function lookupKnownReaction(reactants: string[]): KnownReaction | null {
   return null;
 }
 
+// ===========================================================================
+// Deterministic product predictor
+//
+// Rule-based prediction of reaction products for arbitrary reactant sets using
+// pure chemistry — ion charges, an activity series, solubility rules, and
+// reaction-class logic. No external model is consulted; stoichiometry is then
+// resolved exactly by balanceEquation().
+// ===========================================================================
+
+// Possible oxidation states of common cations (used when decomposing an
+// existing formula — the correct charge is the one that reproduces the formula).
+const CATION_CHARGES: Record<string, number[]> = {
+  Li: [1], Na: [1], K: [1], Rb: [1], Cs: [1], Ag: [1],
+  Be: [2], Mg: [2], Ca: [2], Sr: [2], Ba: [2], Zn: [2], Cd: [2], Ni: [2],
+  Co: [2, 3], Fe: [2, 3], Cu: [1, 2], Sn: [2, 4], Pb: [2, 4], Mn: [2, 4],
+  Hg: [1, 2], Al: [3], Cr: [2, 3], Bi: [3],
+};
+
+// Default cation charge when building a brand-new compound from an element.
+const DEFAULT_CATION_CHARGE: Record<string, number> = {
+  Li: 1, Na: 1, K: 1, Rb: 1, Cs: 1, Ag: 1,
+  Be: 2, Mg: 2, Ca: 2, Sr: 2, Ba: 2, Zn: 2, Cd: 2, Ni: 2, Co: 2, Fe: 2,
+  Cu: 2, Sn: 2, Pb: 2, Mn: 2, Hg: 2, Al: 3, Cr: 3, Bi: 3,
+};
+
+// Preferred oxide of a metal formed on direct combination with O2.
+const SPECIAL_METAL_OXIDE: Record<string, string> = {
+  Fe: "Fe2O3", Cu: "CuO", Cr: "Cr2O3", Mn: "MnO2", Sn: "SnO2", Pb: "PbO", Al: "Al2O3",
+};
+
+// Oxide formed by a nonmetal element burning in O2.
+const NONMETAL_OXIDE: Record<string, string> = { C: "CO2", S: "SO2", P: "P2O5" };
+
+// Anions: formula -> charge (polyatomic first, then monatomic).
+const ANION_CHARGES: Record<string, number> = {
+  OH: -1, NO3: -1, NO2: -1, CH3COO: -1, HCO3: -1, ClO3: -1, ClO4: -1, ClO: -1,
+  MnO4: -1, CN: -1, SCN: -1, HSO4: -1,
+  SO4: -2, SO3: -2, CO3: -2, CrO4: -2, Cr2O7: -2, C2O4: -2, HPO4: -2,
+  PO4: -3, PO3: -3,
+  F: -1, Cl: -1, Br: -1, I: -1, O: -2, S: -2, N: -3,
+};
+
+// Acids: formula -> conjugate anion + number of ionizable H.
+const ACIDS: Record<string, { anion: string; h: number }> = {
+  HCl: { anion: "Cl", h: 1 }, HBr: { anion: "Br", h: 1 }, HI: { anion: "I", h: 1 },
+  HF: { anion: "F", h: 1 }, HNO3: { anion: "NO3", h: 1 }, HNO2: { anion: "NO2", h: 1 },
+  H2SO4: { anion: "SO4", h: 2 }, H2SO3: { anion: "SO3", h: 2 },
+  H2CO3: { anion: "CO3", h: 2 }, H3PO4: { anion: "PO4", h: 3 },
+  CH3COOH: { anion: "CH3COO", h: 1 }, HClO3: { anion: "ClO3", h: 1 },
+  HClO4: { anion: "ClO4", h: 1 }, HCN: { anion: "CN", h: 1 },
+};
+
+// Nonmetal oxide + water -> oxoacid.
+const OXIDE_TO_ACID: Record<string, string> = {
+  CO2: "H2CO3", SO2: "H2SO3", SO3: "H2SO4", N2O5: "HNO3", P2O5: "H3PO4", P4O10: "H3PO4",
+};
+
+// Metal activity series (most -> least reactive); "H" marks the hydrogen line.
+const ACTIVITY_SERIES = [
+  "Li", "K", "Ba", "Sr", "Ca", "Na", "Mg", "Al", "Mn", "Zn", "Cr", "Fe", "Cd",
+  "Co", "Ni", "Sn", "Pb", "H", "Cu", "Hg", "Ag", "Pt", "Au",
+];
+
+// Metals reactive enough to displace hydrogen from cold water.
+const WATER_REACTIVE_METALS = ["Li", "Na", "K", "Rb", "Cs", "Ca", "Sr", "Ba"];
+
+// Halogen displacement order (most -> least reactive).
+const HALOGEN_ORDER = ["F", "Cl", "Br", "I"];
+
+const DIATOMIC = new Set(["H2", "N2", "O2", "F2", "Cl2", "Br2", "I2"]);
+
+function isMetal(sym: string): boolean {
+  return sym in DEFAULT_CATION_CHARGE;
+}
+
+/** Deep element-count equality. */
+function countsEqual(a: ElementCounts, b: ElementCounts): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    if ((a[k] || 0) !== (b[k] || 0)) return false;
+  }
+  return true;
+}
+
+/** True when an ion is polyatomic (needs parentheses when subscripted). */
+function isPolyatomic(ion: string): boolean {
+  return !(PERIODIC_TABLE[ion] && ion.length <= 2 && /^[A-Z][a-z]?$/.test(ion));
+}
+
+function subscriptPart(part: string, n: number, poly: boolean): string {
+  if (n === 1) return part;
+  return poly ? `(${part})${n}` : `${part}${n}`;
+}
+
+/**
+ * Compose the neutral formula of an ionic compound from a cation and anion,
+ * crossing charge magnitudes and reducing by their GCD.
+ */
+export function buildSalt(cation: string, catCharge: number, anion: string, anCharge: number): string {
+  const a = Math.abs(catCharge);
+  const b = Math.abs(anCharge);
+  let g = 1;
+  for (let d = Math.min(a, b); d >= 1; d--) {
+    if (a % d === 0 && b % d === 0) { g = d; break; }
+  }
+  const nCat = b / g;
+  const nAn = a / g;
+
+  // Acetate reads more naturally written after the cation as CH3COO.
+  if (anion === "CH3COO") {
+    return subscriptPart(cation, nCat, isPolyatomic(cation)) + subscriptPart("CH3COO", nAn, true);
+  }
+  return (
+    subscriptPart(cation, nCat, isPolyatomic(cation)) +
+    subscriptPart(anion, nAn, isPolyatomic(anion))
+  );
+}
+
+export interface IonicParts {
+  cation: string;
+  catCharge: number;
+  anion: string;
+  anCharge: number;
+}
+
+/**
+ * Decompose an ionic-compound formula into its cation and anion by enumerating
+ * known ions and finding the pair whose neutral formula reproduces the input.
+ * Prefers the most specific (largest polyatomic) anion match.
+ */
+export function parseIonic(formula: string): IonicParts | null {
+  let target: ElementCounts;
+  try {
+    target = parseFormula(formula);
+  } catch {
+    return null;
+  }
+
+  const cationCandidates: Array<{ sym: string; charge: number }> = [{ sym: "NH4", charge: 1 }];
+  for (const [sym, charges] of Object.entries(CATION_CHARGES)) {
+    for (const c of charges) cationCandidates.push({ sym, charge: c });
+  }
+
+  let best: IonicParts | null = null;
+  let bestAnionSize = -1;
+  for (const cat of cationCandidates) {
+    for (const [anion, anCharge] of Object.entries(ANION_CHARGES)) {
+      let built: string;
+      try {
+        built = buildSalt(cat.sym, cat.charge, anion, anCharge);
+        if (!countsEqual(parseFormula(built), target)) continue;
+      } catch {
+        continue;
+      }
+      const anionSize = Object.values(parseFormula(anion)).reduce((s, v) => s + v, 0);
+      if (anionSize > bestAnionSize) {
+        bestAnionSize = anionSize;
+        best = { cation: cat.sym, catCharge: cat.charge, anion, anCharge };
+      }
+    }
+  }
+  return best;
+}
+
+/** Return the element symbol if the formula is a single element (incl. diatomics). */
+function singleElement(formula: string): string | null {
+  try {
+    const c = parseFormula(formula);
+    const keys = Object.keys(c);
+    return keys.length === 1 ? keys[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+type CompoundKind =
+  | "O2" | "H2" | "N2" | "water" | "peroxide" | "ammonia" | "halogen"
+  | "metal" | "nonmetal_element" | "acid" | "base" | "carbonate"
+  | "bicarbonate" | "metal_oxide" | "nonmetal_oxide" | "chlorate" | "salt" | "other";
+
+interface Classified {
+  formula: string;
+  kind: CompoundKind;
+  ionic?: IonicParts | null;
+  element?: string;
+}
+
+function classifyCompound(formula: string): Classified {
+  const f = formula.replace(/\s/g, "");
+  if (f === "O2") return { formula: f, kind: "O2" };
+  if (f === "H2") return { formula: f, kind: "H2" };
+  if (f === "N2") return { formula: f, kind: "N2" };
+  if (f === "H2O") return { formula: f, kind: "water" };
+  if (f === "H2O2") return { formula: f, kind: "peroxide" };
+  if (f === "NH3") return { formula: f, kind: "ammonia" };
+  if (["F2", "Cl2", "Br2", "I2"].includes(f)) return { formula: f, kind: "halogen", element: f[0] === "C" ? "Cl" : f[0] === "B" ? "Br" : f[0] };
+  if (["CO2", "CO", "SO2", "SO3", "NO", "NO2", "N2O5", "P2O5", "P4O10"].includes(f)) return { formula: f, kind: "nonmetal_oxide" };
+  if (f in ACIDS) return { formula: f, kind: "acid" };
+
+  const el = singleElement(f);
+  if (el && !DIATOMIC.has(f)) {
+    return { formula: f, kind: isMetal(el) ? "metal" : "nonmetal_element", element: el };
+  }
+  if (el && DIATOMIC.has(f)) {
+    // Diatomic nonmetal element already handled above except generic
+    return { formula: f, kind: "nonmetal_element", element: el };
+  }
+
+  const ionic = parseIonic(f);
+  if (ionic) {
+    switch (ionic.anion) {
+      case "OH": return { formula: f, kind: "base", ionic };
+      case "CO3": return { formula: f, kind: "carbonate", ionic };
+      case "HCO3": return { formula: f, kind: "bicarbonate", ionic };
+      case "O": return { formula: f, kind: "metal_oxide", ionic };
+      case "ClO3": return { formula: f, kind: "chlorate", ionic };
+      default: return { formula: f, kind: "salt", ionic };
+    }
+  }
+  return { formula: f, kind: "other" };
+}
+
+/** Solubility rules -> is the salt soluble in water? */
+function isSoluble(cation: string, anion: string): boolean {
+  if (["Li", "Na", "K", "Rb", "Cs", "NH4"].includes(cation)) return true;
+  if (["NO3", "ClO3", "ClO4", "CH3COO", "NO2"].includes(anion)) return true;
+  if (["Cl", "Br", "I"].includes(anion)) return !["Ag", "Pb", "Hg", "Cu"].includes(cation);
+  if (anion === "SO4") return !["Ba", "Sr", "Pb", "Ca", "Ag"].includes(cation);
+  if (anion === "OH") return ["Ba", "Sr", "Ca"].includes(cation);
+  if (["CO3", "PO4", "SO3", "CrO4", "S", "O"].includes(anion)) return false;
+  return true;
+}
+
+function saltState(cation: string, anion: string): "aq" | "s" {
+  return isSoluble(cation, anion) ? "aq" : "s";
+}
+
+export interface Prediction {
+  reactionOccurs: boolean;
+  products: string[];
+  reactantStates: string[];
+  productStates: string[];
+  type: ReactionType;
+  observations: string;
+  conditions?: string;
+  mechanism?: string;
+  hazards?: string;
+  reason?: string;
+}
+
+function metalOxide(cation: string): string {
+  if (SPECIAL_METAL_OXIDE[cation]) return SPECIAL_METAL_OXIDE[cation];
+  return buildSalt(cation, DEFAULT_CATION_CHARGE[cation] || 2, "O", -2);
+}
+
+function noReaction(reason: string): Prediction {
+  return {
+    reactionOccurs: false, products: [], reactantStates: [], productStates: [],
+    type: "Unclassified", observations: "", reason,
+  };
+}
+
+/**
+ * Predict the products of a reaction deterministically. Returns
+ * reactionOccurs=false (with a reason) when no rule applies or no driving force
+ * exists — an honest "these do not react" rather than a guess.
+ */
+export function predictProducts(reactants: string[], conditions = ""): Prediction {
+  const species = reactants.map(classifyCompound);
+  const kinds = species.map((s) => s.kind);
+  const has = (k: CompoundKind) => kinds.includes(k);
+  const find = (k: CompoundKind) => species.find((s) => s.kind === k)!;
+
+  // ---- Single-reactant decomposition ----
+  if (reactants.length === 1) {
+    const s = species[0];
+    if (s.kind === "carbonate" && s.ionic) {
+      return finish(
+        [metalOxide(s.ionic.cation), "CO2"], "Decomposition",
+        `${s.formula} decomposes on strong heating, releasing carbon dioxide gas and leaving the metal oxide.`,
+        conditions || "Strong heat", reactants
+      );
+    }
+    if (s.kind === "bicarbonate" && s.ionic) {
+      const carbonate = buildSalt(s.ionic.cation, s.ionic.catCharge, "CO3", -2);
+      return finish([carbonate, "H2O", "CO2"], "Decomposition",
+        `${s.formula} decomposes with heat into the carbonate, water, and carbon dioxide.`,
+        conditions || "Heat", reactants);
+    }
+    if (s.kind === "base" && s.ionic) {
+      return finish([metalOxide(s.ionic.cation), "H2O"], "Decomposition",
+        `${s.formula} decomposes on heating to the metal oxide and water vapour.`,
+        conditions || "Heat", reactants);
+    }
+    if (s.kind === "chlorate" && s.ionic) {
+      const chloride = buildSalt(s.ionic.cation, s.ionic.catCharge, "Cl", -1);
+      return finish([chloride, "O2"], "Decomposition",
+        `${s.formula} decomposes on heating (often with a catalyst) into the chloride and oxygen gas.`,
+        conditions || "Heat, MnO2 catalyst", reactants);
+    }
+    if (s.kind === "peroxide") {
+      return finish(["H2O", "O2"], "Decomposition",
+        "Hydrogen peroxide decomposes into water and oxygen gas.",
+        conditions || "Catalyst (MnO2)", reactants);
+    }
+    return noReaction("Single stable reactant with no known decomposition pathway. Provide products or add a second reactant.");
+  }
+
+  // ---- Combustion of a C/H(/O) compound in O2 ----
+  if (has("O2") && reactants.length === 2) {
+    const fuel = species.find((s) => s.kind !== "O2");
+    if (fuel) {
+      let counts: ElementCounts = {};
+      try { counts = parseFormula(fuel.formula); } catch { counts = {}; }
+      const elems = Object.keys(counts);
+      const onlyCHO = elems.every((e) => ["C", "H", "O"].includes(e));
+      if (onlyCHO && (counts.C || counts.H)) {
+        const prods: string[] = [];
+        if (counts.C) prods.push("CO2");
+        if (counts.H) prods.push("H2O");
+        return finish(prods, "Combustion",
+          `${fuel.formula} burns in oxygen, releasing heat and light and producing ${prods.join(" and ")}.`,
+          conditions || "Ignition", reactants, "Combustion is highly exothermic — keep fuels away from ignition sources and ensure ventilation.");
+      }
+    }
+  }
+
+  // ---- Element + O2 -> oxide (synthesis / combustion) ----
+  if (has("O2") && reactants.length === 2) {
+    const other = species.find((s) => s.kind !== "O2");
+    if (other && (other.kind === "metal" || other.kind === "nonmetal_element" || other.kind === "H2")) {
+      const el = other.element || (other.kind === "H2" ? "H" : "");
+      if (other.kind === "H2") {
+        return finish(["H2O"], "Synthesis (Combination)", "Hydrogen burns in oxygen, combining explosively to form water.", conditions || "Spark", reactants, "Hydrogen–oxygen mixtures are explosive.");
+      }
+      if (isMetal(el)) {
+        return finish([metalOxide(el)], "Synthesis (Combination)",
+          `${el} combines with oxygen to form its oxide${SPECIAL_METAL_OXIDE[el] ? "" : ""}.`,
+          conditions || "Heat", reactants);
+      }
+      if (NONMETAL_OXIDE[el]) {
+        return finish([NONMETAL_OXIDE[el]], "Combustion",
+          `${el} burns in oxygen to form ${NONMETAL_OXIDE[el]}.`,
+          conditions || "Ignition", reactants);
+      }
+    }
+  }
+
+  // ---- Acid + Base -> salt + water ----
+  if (has("acid") && has("base")) {
+    const acid = find("acid");
+    const base = find("base");
+    const anion = ACIDS[acid.formula].anion;
+    const salt = buildSalt(base.ionic!.cation, base.ionic!.catCharge, anion, ANION_CHARGES[anion]);
+    return finish([salt, "H2O"], "Acid–Base Neutralization",
+      `The acid and base neutralize each other, forming ${salt} (a salt) and water; the mixture warms as heat is released.`,
+      conditions, reactants, "Acids and bases are corrosive — add acid to water, never the reverse, and wear eye protection.");
+  }
+
+  // ---- Acid + metal oxide -> salt + water ----
+  if (has("acid") && has("metal_oxide")) {
+    const acid = find("acid");
+    const oxide = find("metal_oxide");
+    const anion = ACIDS[acid.formula].anion;
+    const salt = buildSalt(oxide.ionic!.cation, oxide.ionic!.catCharge, anion, ANION_CHARGES[anion]);
+    return finish([salt, "H2O"], "Double Displacement (Metathesis)",
+      `The metal oxide is neutralized by the acid, dissolving to give ${salt} and water.`,
+      conditions, reactants);
+  }
+
+  // ---- Acid + carbonate/bicarbonate -> salt + water + CO2 ----
+  if (has("acid") && (has("carbonate") || has("bicarbonate"))) {
+    const acid = find("acid");
+    const carb = has("carbonate") ? find("carbonate") : find("bicarbonate");
+    const anion = ACIDS[acid.formula].anion;
+    const salt = buildSalt(carb.ionic!.cation, carb.ionic!.catCharge, anion, ANION_CHARGES[anion]);
+    return finish([salt, "H2O", "CO2"], "Double Displacement (Metathesis)",
+      `The acid reacts with the carbonate, fizzing vigorously as carbon dioxide gas is released, leaving ${salt} in solution.`,
+      conditions, reactants);
+  }
+
+  // ---- Active metal + acid -> salt + H2 ----
+  if (has("acid") && has("metal")) {
+    const acid = find("acid");
+    const metal = find("metal");
+    const el = metal.element!;
+    const mi = ACTIVITY_SERIES.indexOf(el);
+    const hi = ACTIVITY_SERIES.indexOf("H");
+    if (mi !== -1 && mi < hi) {
+      const anion = ACIDS[acid.formula].anion;
+      const salt = buildSalt(el, DEFAULT_CATION_CHARGE[el], anion, ANION_CHARGES[anion]);
+      return finish([salt, "H2"], "Single Displacement",
+        `${el} is more reactive than hydrogen, so it displaces H2 from the acid — bubbles of hydrogen gas form as ${salt} dissolves.`,
+        conditions, reactants, "Hydrogen gas is flammable; keep flames away.");
+    }
+    return noReaction(`${el} sits below hydrogen in the activity series, so it does not displace hydrogen from this acid — no reaction.`);
+  }
+
+  // ---- Active metal + water -> hydroxide + H2 ----
+  if (has("water") && has("metal")) {
+    const metal = find("metal");
+    const el = metal.element!;
+    if (WATER_REACTIVE_METALS.includes(el)) {
+      const hydroxide = buildSalt(el, DEFAULT_CATION_CHARGE[el], "OH", -1);
+      return finish([hydroxide, "H2"], "Single Displacement",
+        `${el} reacts with water, fizzing as hydrogen gas is released and forming ${hydroxide} in solution.`,
+        conditions, reactants, "Alkali metals react violently with water and may ignite the hydrogen released.");
+    }
+    return noReaction(`${el} is not reactive enough to displace hydrogen from cold water.`);
+  }
+
+  // ---- Metal oxide + water -> hydroxide ----
+  if (has("water") && has("metal_oxide")) {
+    const oxide = find("metal_oxide");
+    const hydroxide = buildSalt(oxide.ionic!.cation, oxide.ionic!.catCharge, "OH", -1);
+    return finish([hydroxide], "Synthesis (Combination)",
+      `The metal oxide reacts with water to form ${hydroxide}; basic (metal) oxides give alkaline hydroxide solutions.`,
+      conditions, reactants);
+  }
+
+  // ---- Nonmetal oxide + water -> oxoacid ----
+  if (has("water") && has("nonmetal_oxide")) {
+    const oxide = find("nonmetal_oxide");
+    const acid = OXIDE_TO_ACID[oxide.formula];
+    if (acid) {
+      return finish([acid], "Synthesis (Combination)",
+        `The nonmetal oxide dissolves in water to form ${acid}; acidic oxides give acidic solutions.`,
+        conditions, reactants);
+    }
+  }
+
+  // ---- Metal + salt (single displacement) ----
+  if (has("metal") && has("salt")) {
+    const metal = find("metal");
+    const salt = find("salt");
+    const el = metal.element!;
+    const dissolvedMetal = salt.ionic!.cation;
+    const anion = salt.ionic!.anion;
+    if (isMetal(dissolvedMetal)) {
+      const ai = ACTIVITY_SERIES.indexOf(el);
+      const bi = ACTIVITY_SERIES.indexOf(dissolvedMetal);
+      if (ai !== -1 && bi !== -1 && ai < bi) {
+        const newSalt = buildSalt(el, DEFAULT_CATION_CHARGE[el], anion, ANION_CHARGES[anion]);
+        return finish([newSalt, dissolvedMetal], "Single Displacement",
+          `${el} is more reactive than ${dissolvedMetal}, so it displaces it from solution — solid ${dissolvedMetal} deposits while ${newSalt} forms.`,
+          conditions, reactants);
+      }
+      return noReaction(`${el} is less reactive than ${dissolvedMetal}, so it cannot displace it — no reaction.`);
+    }
+  }
+
+  // ---- Metal + metal oxide (thermite / metallothermic reduction) ----
+  if (has("metal") && has("metal_oxide")) {
+    const metal = find("metal");
+    const oxide = find("metal_oxide");
+    const el = metal.element!;
+    const oxideMetal = oxide.ionic!.cation;
+    const ai = ACTIVITY_SERIES.indexOf(el);
+    const bi = ACTIVITY_SERIES.indexOf(oxideMetal);
+    if (ai !== -1 && bi !== -1 && ai < bi) {
+      return finish([metalOxide(el), oxideMetal], "Single Displacement",
+        `${el} is more reactive than ${oxideMetal}, so it strips the oxygen away (a thermite-type redox reduction): molten ${oxideMetal} and ${metalOxide(el)} form with an intense release of heat.`,
+        conditions || "High-temperature ignition", reactants, "Thermite reactions reach extreme temperatures and are self-sustaining — perform only with proper shielding.");
+    }
+    return noReaction(`${el} is less reactive than ${oxideMetal}, so it cannot reduce ${oxide.formula} — no reaction.`);
+  }
+
+  // ---- H2 or C reduces a metal oxide ----
+  if ((has("H2") || has("nonmetal_element")) && has("metal_oxide")) {
+    const reducer = species.find((s) => s.kind === "H2" || (s.kind === "nonmetal_element" && s.element === "C"));
+    const oxide = find("metal_oxide");
+    const oxideMetal = oxide.ionic!.cation;
+    const bi = ACTIVITY_SERIES.indexOf(oxideMetal);
+    // Only oxides of metals at/below zinc are readily reduced by H2/C.
+    if (reducer && bi >= ACTIVITY_SERIES.indexOf("Zn")) {
+      if (reducer.kind === "H2") {
+        return finish([oxideMetal, "H2O"], "Redox",
+          `Hydrogen reduces ${oxide.formula}, pulling off the oxygen to leave metallic ${oxideMetal} and water vapour.`,
+          conditions || "Heat", reactants);
+      }
+      return finish([oxideMetal, "CO2"], "Redox",
+        `Carbon reduces ${oxide.formula} (a smelting-type reaction), freeing metallic ${oxideMetal} and releasing carbon dioxide.`,
+        conditions || "Strong heat", reactants);
+    }
+  }
+
+  // ---- Halogen + halide salt (single displacement) ----
+  if (has("halogen") && has("salt")) {
+    const hal = find("halogen");
+    const salt = find("salt");
+    const x = hal.element!;
+    const y = salt.ionic!.anion;
+    if (["Cl", "Br", "I", "F"].includes(y)) {
+      const xi = HALOGEN_ORDER.indexOf(x);
+      const yi = HALOGEN_ORDER.indexOf(y);
+      if (xi !== -1 && yi !== -1 && xi < yi) {
+        const newSalt = buildSalt(salt.ionic!.cation, salt.ionic!.catCharge, x, -1);
+        const freed = y + "2";
+        return finish([newSalt, freed], "Single Displacement",
+          `${x}2 is more reactive than ${y}2, so it displaces it — ${freed} is released and ${newSalt} forms.`,
+          conditions, reactants);
+      }
+      return noReaction(`${x}2 is less reactive than ${y}2, so no displacement occurs.`);
+    }
+  }
+
+  // ---- Metal + nonmetal -> binary ionic compound (synthesis) ----
+  if (has("metal") && (has("halogen") || has("nonmetal_element"))) {
+    const metal = find("metal");
+    const nm = species.find((s) => s.kind === "halogen" || s.kind === "nonmetal_element")!;
+    const el = metal.element!;
+    let anion = nm.element!;
+    if (nm.kind === "halogen") anion = nm.element!;
+    if (anion in ANION_CHARGES) {
+      const compound = buildSalt(el, DEFAULT_CATION_CHARGE[el], anion, ANION_CHARGES[anion]);
+      return finish([compound], "Synthesis (Combination)",
+        `${el} combines directly with ${nm.formula} to form the ionic compound ${compound}.`,
+        conditions || "Heat", reactants);
+    }
+  }
+
+  // ---- Double displacement between two ionic compounds (metathesis) ----
+  const ionicKinds: CompoundKind[] = ["salt", "base", "carbonate", "bicarbonate", "metal_oxide", "chlorate"];
+  const ionics = species.filter((s) => ionicKinds.includes(s.kind) && s.ionic);
+  if (ionics.length === 2 && reactants.length === 2) {
+    const [a, b] = ionics;
+    const p1 = buildSalt(a.ionic!.cation, a.ionic!.catCharge, b.ionic!.anion, b.ionic!.anCharge);
+    const p2 = buildSalt(b.ionic!.cation, b.ionic!.catCharge, a.ionic!.anion, a.ionic!.anCharge);
+    const s1 = saltState(a.ionic!.cation, b.ionic!.anion);
+    const s2 = saltState(b.ionic!.cation, a.ionic!.anion);
+    if (s1 === "s" || s2 === "s") {
+      const precip = s1 === "s" ? p1 : p2;
+      return finish([p1, p2], "Precipitation",
+        `The ions exchange partners; insoluble ${precip} comes out of solution as a precipitate, driving the reaction forward.`,
+        conditions, reactants, undefined, [s1, s2]);
+    }
+    return noReaction("All possible products are soluble, so the ions stay in solution as spectators — no net reaction.");
+  }
+
+  return noReaction("No deterministic reaction rule matched these reactants. Provide the expected products to balance the equation, or check the formulas.");
+
+  // --- local helper that finalizes a prediction with reactant/product states ---
+  function finish(
+    products: string[], type: ReactionType, observations: string,
+    cond: string, reacts: string[], hazards?: string, productStatesOverride?: string[]
+  ): Prediction {
+    const reactantStates = reacts.map((r) => defaultState(r));
+    const productStates = productStatesOverride || products.map((p) => defaultState(p));
+    return {
+      reactionOccurs: true, products, reactantStates, productStates, type,
+      observations, conditions: cond || undefined, hazards,
+    };
+  }
+}
+
+/** Best-effort physical state for a species at room conditions. */
+function defaultState(formula: string): string {
+  const f = formula.replace(/\s/g, "");
+  if (["O2", "H2", "N2", "Cl2", "F2", "CO2", "CO", "SO2", "SO3", "NO", "NO2", "NH3", "CH4", "C3H8"].includes(f)) return "g";
+  if (["H2O", "H2O2", "Br2", "H2SO4", "CH3COOH", "C2H5OH"].includes(f)) return "l";
+  const cls = classifyCompound(f);
+  if (cls.kind === "metal" || cls.kind === "nonmetal_element" || cls.kind === "metal_oxide") return "s";
+  if (cls.kind === "acid") return "aq";
+  if (cls.ionic) return saltState(cls.ionic.cation, cls.ionic.anion);
+  return "";
+}
+
 /** Render a human-readable balanced equation string. */
 export function formatEquation(
   reactants: string[],
