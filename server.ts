@@ -110,213 +110,6 @@ function getParetoFrontMask(costs: number[][]): boolean[] {
   return isOptimal;
 }
 
-/**
- * High-fidelity, zero-dependency offline chemical databank fallback
- * Handles popular clinical molecules deterministically to resist any API outage.
- */
-function getLocalChemicalFallback(q: string) {
-  const norm = q.toLowerCase().trim();
-  
-  // High-fidelity pre-compiled dataset for common user queries
-  const database: Record<string, {
-    cid: number;
-    name: string;
-    iupac_name: string;
-    smiles: string;
-    formula: string;
-    mw: number;
-    clogp: number;
-    tpsa: number;
-    hbd: number;
-    hba: number;
-    rotatable_bonds: number;
-    description: string;
-    descriptionSource: string;
-    synonyms: string[];
-  }> = {
-    naproxen: {
-      cid: 3715,
-      name: "Naproxen",
-      iupac_name: "(2S)-2-(6-methoxynaphthalen-2-yl)propanoic acid",
-      smiles: "CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O",
-      formula: "C14H14O3",
-      mw: 230.26,
-      clogp: 3.18,
-      tpsa: 46.5,
-      hbd: 1,
-      hba: 3,
-      rotatable_bonds: 3,
-      description: "Naproxen is a nonsteroidal anti-inflammatory drug (NSAID) of the propionic acid class. It acts by inhibiting both COX-1 and COX-2 enzymes to treat moderate pain, swelling, stiffness, rheumatoid arthritis, gout, and menstrual cramps.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Naproxen", "Aleve", "Naprosyn", "Anaprox", "Apranax", "Sinaflam", "Naprutene"]
-    },
-    aspirin: {
-      cid: 2244,
-      name: "Aspirin",
-      iupac_name: "2-acetyloxybenzoic acid",
-      smiles: "CC(=O)OC1=CC=CC=C1C(=O)O",
-      formula: "C9H8O4",
-      mw: 180.16,
-      clogp: 1.19,
-      tpsa: 63.6,
-      hbd: 1,
-      hba: 4,
-      rotatable_bonds: 3,
-      description: "Aspirin, also known as acetylsalicylic acid (ASA), is a classic nonsteroidal anti-inflammatory drug (NSAID) used to reduce pain, fever, or inflammation, and as an irreversible inhibitor of platelet aggregation to prevent cardiovascular events.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Aspirin", "Acetylsalicylic acid", "Ecotrin", "Bayer Aspirin", "Polopiryna", "Colfarit"]
-    },
-    ibuprofen: {
-      cid: 3672,
-      name: "Ibuprofen",
-      iupac_name: "2-[4-(2-methylpropyl)phenyl]propanoic acid",
-      smiles: "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
-      formula: "C13H18O2",
-      mw: 206.28,
-      clogp: 3.5,
-      tpsa: 37.3,
-      hbd: 1,
-      hba: 2,
-      rotatable_bonds: 4,
-      description: "Ibuprofen is a widely prescribed nonsteroidal anti-inflammatory drug (NSAID) used for treating mild to moderate pain, fever, dysmenorrhea, and inflammatory disorders such as juvenile arthritis.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Ibuprofen", "Advil", "Motrin", "Nurofen", "Brufen", "Algifor", "Antalgil"]
-    },
-    caffeine: {
-      cid: 2519,
-      name: "Caffeine",
-      iupac_name: "1,3,7-Trimethylpurine-2,6-dione",
-      smiles: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
-      formula: "C8H10N4O2",
-      mw: 194.19,
-      clogp: -0.07,
-      tpsa: 58.4,
-      hbd: 0,
-      hba: 6,
-      rotatable_bonds: 0,
-      description: "Caffeine is a key central nervous system (CNS) stimulant of the methylxanthine class. It operates primary physiological action via competitive antagonism of adenosine receptors, promoting alert states and respiratory stimulation.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Caffeine", "1,3,7-Trimethylxanthine", "Guaranine", "Theine", "NoDoz", "Alertness aid"]
-    },
-    acetaminophen: {
-      cid: 1983,
-      name: "Acetaminophen",
-      iupac_name: "N-(4-hydroxyphenyl)acetamide",
-      smiles: "CC(=O)NC1=CC=C(O)C=C1",
-      formula: "C8H9NO2",
-      mw: 151.16,
-      clogp: 0.46,
-      tpsa: 49.3,
-      hbd: 2,
-      hba: 2,
-      rotatable_bonds: 2,
-      description: "Acetaminophen (paracetamol) is a highly utilized analgesic and antipyretic compound. It works predominantly by inhibiting prostaglandin synthesis in the central nervous system, targeting mild to moderate somatic pain.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Acetaminophen", "Paracetamol", "Tylenol", "Panadol", "Calpol", "Apap", "Abensanil"]
-    },
-    paracetamol: {
-      cid: 1983,
-      name: "Paracetamol",
-      iupac_name: "N-(4-hydroxyphenyl)acetamide",
-      smiles: "CC(=O)NC1=CC=C(O)C=C1",
-      formula: "C8H9NO2",
-      mw: 151.16,
-      clogp: 0.46,
-      tpsa: 49.3,
-      hbd: 2,
-      hba: 2,
-      rotatable_bonds: 2,
-      description: "Paracetamol (acetaminophen) is a prominent analgesic and antipyretic agent used globally to relieve mild-to-moderate somatic pain and suppress idiopathic fever syndromes.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Paracetamol", "Acetaminophen", "Tylenol", "Panadol", "Doliprane", "Efferalgan"]
-    },
-    nicotine: {
-      cid: 89594,
-      name: "Nicotine",
-      iupac_name: "3-[(2S)-1-methylpyrrolidin-2-yl]pyridine",
-      smiles: "CN1CCCC1C2=CN=CC=C2",
-      formula: "C10H14N2",
-      mw: 162.23,
-      clogp: 1.17,
-      tpsa: 16.1,
-      hbd: 0,
-      hba: 2,
-      rotatable_bonds: 1,
-      description: "Nicotine is a potent parasympathomimetic stimulant alkaloid found naturally in Nicotiana tabacum. It is a highly selective agonist of the nicotinic acetylcholine receptors (nAChRs) triggering catecholamine release.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Nicotine", "Habitrol", "Nicorette", "Nicoderm", "3-(1-Methyl-2-pyrrolidinyl)pyridine"]
-    },
-    metformin: {
-      cid: 4091,
-      name: "Metformin",
-      iupac_name: "3-(diaminomethylidene)-1,1-dimethylguanidine",
-      smiles: "CNC(=N)NC(=N)N",
-      formula: "C4H11N5",
-      mw: 129.16,
-      clogp: -1.4,
-      tpsa: 88.0,
-      hbd: 3,
-      hba: 4,
-      rotatable_bonds: 2,
-      description: "Metformin is a biguanide antihyperglycemic agent. It stands as the premier first-line pharmacotherapy for Type 2 Diabetes Mellitus, working by activating AMP-activated protein kinase (AMPK) and lowering hepatic gluconeogenesis.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Metformin", "Glucophage", "Fortamet", "Glumetza", "Dimethylbiguanide"]
-    },
-    sildenafil: {
-      cid: 5212,
-      name: "Sildenafil",
-      iupac_name: "5-[2-ethoxy-5-(4-methylpiperazin-1-yl)sulfonylphenyl]-1-methyl-3-propyl-6H-pyrazolo[4,3-d]pyrimidin-7-one",
-      smiles: "CCCC1=NN(C2=C1NC(=NC2=O)C3=C(C=CC(=C3)S(=O)(=O)N4CCN(CC4)C)OCC)C",
-      formula: "C22H30N6O4S",
-      mw: 474.6,
-      clogp: 2.7,
-      tpsa: 106.1,
-      hbd: 1,
-      hba: 10,
-      rotatable_bonds: 7,
-      description: "Sildenafil is a highly selective piperazine-containing inhibitor of cGMP-specific phosphodiesterase type 5 (PDE5). It improves vasodilatory responses, treating pulmonary hypertension and erectile dysfunction under brands such as Viagra.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Sildenafil", "Viagra", "Revatio", "Sildenafil citrate", "UK-92,480"]
-    }
-  };
-
-  // Check static matches e.g. "naproxen", "naproxen sodium"
-  const matchedKey = Object.keys(database).find(k => norm.includes(k) || k.includes(norm));
-  
-  if (matchedKey) {
-    const data = database[matchedKey];
-    return {
-      ...data,
-      descriptionUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${data.cid}`,
-      reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${data.cid}`,
-      websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${data.cid}#section=Top`
-    };
-  }
-
-  // Procedural generator fallback for arbitrary user-entered queries
-  console.log(`[Procedural Fallback] Creating a realistic procedural chemical model for: "${q}"`);
-  const mockCid = Math.floor(Math.random() * 50000) + 10000;
-  return {
-    cid: mockCid,
-    name: q.charAt(0).toUpperCase() + q.slice(1),
-    iupac_name: `Procedural IUPAC-[${q.toUpperCase()}]-SCAFFOLD`,
-    smiles: "CC1=CC(=CC(=C1O)C)C2=CC=C(C=C2)C(=O)O", // Procedural scaffold
-    formula: "C16H16O3",
-    mw: 256.30,
-    clogp: 2.85,
-    tpsa: 46.5,
-    hbd: 1,
-    hba: 3,
-    rotatable_bonds: 3,
-    description: `Procedurally formulated database record for ${q}. Retreived via local secondary simulation models. Plausible therapeutic scaffold with active functionalized aromatic hubs.`,
-    descriptionSource: "Procedural Analog Hub Sim",
-    descriptionUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${mockCid}`,
-    synonyms: [q, `${q} Analog`, `${q} Sodium`, `Clinical-Compound-${mockCid}`],
-    reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${mockCid}`,
-    websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${mockCid}#section=Top`
-  };
-}
-
 const PUBCHEM_PROPS = "CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount";
 
 /** Fetch the property record for a compound by name / smiles / cid. Returns null on a clean miss (404); throws on transport failure. */
@@ -326,7 +119,7 @@ async function pubchemProperties(kind: "name" | "smiles" | "cid", value: string)
   // 404/400 are genuine "no such compound / bad query" answers from PubChem.
   if (r.status === 404 || r.status === 400) return null;
   // Anything else non-OK (403/407 egress policy, 429 rate limit, 5xx) is a
-  // reachability problem — surface it so the caller can use the offline mirror.
+  // reachability problem — surface it so the caller can report the outage.
   if (!r.ok) throw new Error(`PubChem returned HTTP ${r.status}`);
   const data: any = await r.json();
   return data?.PropertyTable?.Properties?.[0] || null;
@@ -345,19 +138,11 @@ async function pubchemSuggestName(q: string): Promise<string | null> {
   }
 }
 
-/** Offline mirror lookup restricted to the curated compounds (no procedural fabrication). */
-function getKnownCompound(q: string) {
-  const norm = q.toLowerCase().trim();
-  const knownKeys = ["naproxen", "aspirin", "ibuprofen", "caffeine", "acetaminophen", "paracetamol", "nicotine", "metformin", "sildenafil"];
-  const matched = knownKeys.find(k => norm.includes(k) || k.includes(norm));
-  return matched ? getLocalChemicalFallback(q) : null;
-}
-
 /**
  * Resolve any chemical against the live PubChem database (name, SMILES, CID, or a
- * fuzzy/misspelled name via autocomplete). Returns null when PubChem is reachable
- * but has no such compound; throws only when PubChem itself cannot be reached (and
- * the query is not one of the curated offline compounds).
+ * fuzzy/misspelled name via autocomplete). Always routes to PubChem — there is no
+ * offline data path. Returns null when PubChem is reachable but has no such
+ * compound; throws when PubChem itself cannot be reached.
  */
 async function fetchPubChemData(q: string) {
   const trimmed = q.trim();
@@ -455,16 +240,11 @@ async function fetchPubChemData(q: string) {
       websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}#section=Top`
     };
   } catch (err) {
-    // Transport failure — PubChem itself is unreachable. Fall back to the curated
-    // offline mirror for well-known compounds; otherwise report the outage honestly.
+    // Transport failure — PubChem itself could not be reached. Report it honestly;
+    // there is no offline data path.
     const errorPrefix = err instanceof Error ? err.message : String(err);
     console.log(`[PubChem Fetch] PubChem unreachable for "${trimmed}". Reason: ${errorPrefix.slice(0, 120)}`);
-    const known = getKnownCompound(trimmed);
-    if (known) {
-      console.log(`[Offline Mirror] Served "${trimmed}" from the curated offline library.`);
-      return known;
-    }
-    throw new Error(`PubChem is currently unreachable, so "${trimmed}" could not be looked up. Please check your connection and try again.`);
+    throw new Error(`PubChem is currently unreachable, so "${trimmed}" could not be looked up. Check the server's network connection to pubchem.ncbi.nlm.nih.gov and try again.`);
   }
 }
 

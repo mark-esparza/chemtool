@@ -20,5 +20,6 @@ View your app in AI Studio: https://ai.studio/apps/c037d949-48ad-4cd6-b44e-62f7e
 
 No AI/model API key is required — reaction prediction, equation balancing,
 molecular property calculation, the design pipeline, and reports all run
-deterministically on-device. Compound lookups use the public PubChem REST API
-with an offline library fallback.
+deterministically on-device. Compound lookups query the **live** NIH PubChem
+REST API on every search, so the host running the server needs outbound network
+access to `pubchem.ncbi.nlm.nih.gov`.
