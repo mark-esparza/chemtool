@@ -6,7 +6,6 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { calculateProperties, calculateTanimotoDistance, MolecularProperties } from "./src/lib/chemEngine.js";
 import {
@@ -24,16 +23,6 @@ import {
 
 // Load environment variables
 dotenv.config();
-
-// Initialize Google Gen AI
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
-  }
-});
 
 // Dangerous chemical keywords for Fail-Closed Input Safety
 const DANGEROUS_TERMS = [
@@ -119,81 +108,6 @@ function getParetoFrontMask(costs: number[][]): boolean[] {
     }
   }
   return isOptimal;
-}
-
-/**
- * PubChem PUG REST emulator fallback powered by Gemini
- */
-async function getGeminiPubChemFallback(q: string) {
-  try {
-    const trimmed = q.trim();
-    if (!trimmed) return null;
-    console.log(`[PubChem Fallback Engine] Querying Gemini 3.5 Flash emulator for: "${trimmed}"`);
-    
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: `You are a robust chemical databank emulator. A client is requesting verified NCBI PubChem records for the query/structure: "${trimmed}".
-      
-      Determine if this is a real chemical compound name, common drug brand, chemical formula, SMILES string, or CID.
-      If it is real, return high-precision factual biophysical properties.
-      If the spelling is slightly off, correct it to the nearest real compound (e.g. "naproxen" to Naproxen, or "caffine" to Caffeine).
-      
-      Generate a valid JSON object matching the requested schema with real or extremely realistic physical values (such as partition coefficient logP/XLogP, Molecular Weight, TPSA, Donors/Acceptors, Rotatable Bonds) matching standard chemistry, along with professional scientific writeups for descriptions, synonyms list, and valid IUPAC/Systematic name.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          required: ["cid", "name", "iupac_name", "smiles", "formula", "mw", "clogp", "tpsa", "hbd", "hba", "rotatable_bonds", "description", "descriptionSource", "synonyms"],
-          properties: {
-            cid: { type: Type.INTEGER, description: "Typical PubChem CID or mock identifier number (e.g. 3715 for naproxen, 3672 for ibuprofen)" },
-            name: { type: Type.STRING, description: "Correct common name or brand name (e.g., Naproxen, Aspirin, Ibuprofen)" },
-            iupac_name: { type: Type.STRING, description: "Official systematically formatted IUPAC name (e.g. (2S)-2-(6-methoxynaphthalen-2-yl)propanoic acid)" },
-            smiles: { type: Type.STRING, description: "Canonical or Isomeric SMILES of the target compound (e.g. CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O for Naproxen)" },
-            formula: { type: Type.STRING, description: "Molecular formula (e.g. C14H14O3 for Naproxen)" },
-            mw: { type: Type.NUMBER, description: "Molecular weight (e.g. 230.26 for Naproxen)" },
-            clogp: { type: Type.NUMBER, description: "LogP hydrophobicity partition coefficient (e.g. 3.18 for Naproxen)" },
-            tpsa: { type: Type.NUMBER, description: "TPSA in Å² (e.g. 46.5 for Naproxen)" },
-            hbd: { type: Type.INTEGER, description: "Hydrogen bond donors count (e.g. 1 for Naproxen)" },
-            hba: { type: Type.INTEGER, description: "Hydrogen bond acceptors count (e.g. 3 for Naproxen)" },
-            rotatable_bonds: { type: Type.INTEGER, description: "Rotatable bond count (e.g. 3 for Naproxen)" },
-            description: { type: Type.STRING, description: "Clinical/scientific summary description of the molecular compound, its therapeutic actions, indication, and biochemical mechanism." },
-            descriptionSource: { type: Type.STRING, description: "Reference label, e.g. 'NIH PubChem Library'" },
-            synonyms: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: "List of common clinical synonyms (up to 8 synonyms)"
-            }
-          }
-        }
-      }
-    });
-
-    const parsed = JSON.parse(response.text.trim());
-    const cid = parsed.cid || 99999;
-    return {
-      cid,
-      name: parsed.name || trimmed,
-      iupac_name: parsed.iupac_name || parsed.name || trimmed,
-      smiles: parsed.smiles || "CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O", // Naproxen fallback if string parsing empty
-      formula: parsed.formula || "C14H14O3",
-      mw: parsed.mw || 230.26,
-      clogp: parsed.clogp !== undefined ? parsed.clogp : 3.18,
-      tpsa: parsed.tpsa !== undefined ? parsed.tpsa : 46.5,
-      hbd: parsed.hbd !== undefined ? parsed.hbd : 1,
-      hba: parsed.hba !== undefined ? parsed.hba : 3,
-      rotatable_bonds: parsed.rotatable_bonds !== undefined ? parsed.rotatable_bonds : 3,
-      description: parsed.description || "No description available.",
-      descriptionSource: parsed.descriptionSource || "PubChem AI Agent Emulation",
-      descriptionUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}`,
-      synonyms: parsed.synonyms || [trimmed],
-      reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}`,
-      websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}#section=Top`
-    };
-  } catch (err) {
-    const errorPrefix = err instanceof Error ? err.message : String(err);
-    console.log(`[Database Fallback] getGeminiPubChemFallback offline shift active. Reason: ${errorPrefix.slice(0, 120)}`);
-    return getLocalChemicalFallback(q);
-  }
 }
 
 /**
@@ -432,15 +346,15 @@ async function fetchPubChemData(q: string) {
 
     const response = await fetch(searchUrl);
     if (!response.ok) {
-      console.warn(`PubChem fetch status ${response.status} for "${trimmed}". Invoking Gemini fallback...`);
-      return await getGeminiPubChemFallback(trimmed);
+      console.warn(`PubChem fetch status ${response.status} for "${trimmed}". Using offline chemical library...`);
+      return getLocalChemicalFallback(trimmed);
     }
 
     const data: any = await response.json();
     const properties = data?.PropertyTable?.Properties?.[0];
     if (!properties) {
-      console.warn(`No compound properties found in PubChem REST response for "${trimmed}". Invoking Gemini fallback...`);
-      return await getGeminiPubChemFallback(trimmed);
+      console.warn(`No compound properties found in PubChem REST response for "${trimmed}". Using offline chemical library...`);
+      return getLocalChemicalFallback(trimmed);
     }
 
     const cid = properties.CID;
@@ -502,7 +416,7 @@ async function fetchPubChemData(q: string) {
   } catch (err) {
     const errorPrefix = err instanceof Error ? err.message : String(err);
     console.log(`[PubChem Fetch] PubChem query failed for "${trimmed}". Engaging local fallback. Reason: ${errorPrefix.slice(0, 120)}`);
-    return await getGeminiPubChemFallback(trimmed);
+    return getLocalChemicalFallback(trimmed);
   }
 }
 
@@ -739,130 +653,13 @@ app.post("/api/design-pipeline", async (req, res) => {
       });
     }
 
-    // Step 2: Spec Compiler (LLM translation to strict JSON Brief, integrating experimental feedback)
-    let brief: DesignBrief;
-    try {
-      const specResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Translate this text-to-molecule chemical design goal into a validated Pydantic-like JSON design brief:
-        
-        User request: "${prompt}"
+    // Step 2: Spec Compiler — deterministically translate the goal into a strict design brief.
+    const brief: DesignBrief = getLocalBriefFallback(prompt);
 
-        ${experiments && experiments.length > 0 ? `
-        CRITICAL - CLOSED-LOOP EXPERIMENTAL FEEDBACK ACTIVE:
-        The researcher has uploaded historical real-world lab outcomes from past design runs of this scaffold class:
-        ${JSON.stringify(experiments, null, 2)}
-        
-        Analyze these real-world lab assays! Incorporate lessons from these failures and partial successes. If previous analogs had poor solubility (high clogp), safety filters, or low potency under specific structural variations, actively adjust the brief. Update 'property_constraints' or add structural alerts keyword filters to the 'must_avoid_alerts' list to direct synthesis away from these pitfalls.` : ""}
-
-        Extract:
-        1. A one-sentence 'objective_summary'.
-        2. A 'seed_smiles' (find a biologically relevant seed SMILES mentioned, e.g. Aspirin (CC(=O)OC1=CC=CC=C1C(=O)O), Ibuprofen, Caffeine, Acetaminophen, or select a molecular scaffold matching the context).
-        3. An array of 'property_constraints' targeting relevant properties (e.g. logP, mw, tpsa, hbd, hba).
-        4. Avoided structural alerts (e.g. PAINS, Brenk).
-        5. Novelty boundaries relative to seed.`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["objective_summary", "seed_smiles", "property_constraints", "novelty", "must_avoid_alerts", "confidence_required"],
-            properties: {
-              objective_summary: { type: Type.STRING, description: "Descriptive objective brief" },
-              seed_smiles: { type: Type.STRING, description: "Seed scaffold SMILES string" },
-              property_constraints: {
-                type: Type.ARRAY,
-                description: "Array of molecular design filter targets",
-                items: {
-                  type: Type.OBJECT,
-                  required: ["name", "op", "value", "weight", "hard"],
-                  properties: {
-                    name: { type: Type.STRING, description: "Property key (mw, clogp, tpsa, hbd, hba, rotatable_bonds)" },
-                    op: { type: Type.STRING, enum: ["<=", ">=", "=="] },
-                    value: { type: Type.NUMBER },
-                    weight: { type: Type.NUMBER },
-                    hard: { type: Type.BOOLEAN }
-                  }
-                }
-              },
-              admet_limits: {
-                type: Type.OBJECT,
-                properties: {
-                  h_absorption: { type: Type.STRING }
-                }
-              },
-              novelty: {
-                type: Type.OBJECT,
-                required: ["min_tanimoto_distance_from_seed", "max"],
-                properties: {
-                  min_tanimoto_distance_from_seed: { type: Type.NUMBER },
-                  max: { type: Type.NUMBER }
-                }
-              },
-              must_avoid_alerts: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-              confidence_required: { type: Type.STRING, enum: ["low", "medium", "high"] },
-              notes: { type: Type.STRING }
-            }
-          }
-        }
-      });
-      brief = JSON.parse(specResponse.text.trim());
-    } catch (err: any) {
-      console.warn("[Pipeline Fallback] Spec Compiler failed or quota exceeded. Diverting to local chemical brief designer. Error:", err?.message || err);
-      brief = getLocalBriefFallback(prompt);
-    }
-
-    // Step 3: LLM Candidate Generator (Stoned-style analog enumeration around the seed SMILES)
+    // Step 3: Candidate Generator — deterministic analog enumeration around the seed scaffold.
     const seedStructure = brief.seed_smiles || "CC(=O)OC1=CC=CC=C1C(=O)O";
-    let rawCandidates: Array<{ smiles: string; name: string; rationale: string }> = [];
-    
-    try {
-      const generatorResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `You are an organic chemistry generator agent. Your task is to generate exactly ${numSamples} chemical analogs mutated around the target seed scaffold:
-        
-        Seed SMILES: "${seedStructure}"
-        Design Goal: "${brief.objective_summary}"
-
-        To design realistic analogs, perform typical medicinal chemistry or bioisosteric transformations:
-        - Functional group substitutions (e.g. ester to amide, nitro to amine, fluorination, methoxy groups).
-        - Minor sidechain extensions/truncations.
-        - Bioisosteric ring substitutions.
-
-        ${experiments && experiments.length > 0 ? `
-        CRITICAL - ANALYZE LABORATORY OUTCOMES:
-        These are the real-world lab metrics from previous attempts:
-        ${JSON.stringify(experiments, null, 2)}
-
-        IMPORTANT DIRECTIVES:
-        - DO NOT generate chemical entities that duplicate failed molecules!
-        - If a structural feature or motif in previous experiments caused poor solubility, low potency or safety alarms, actively mutate those motifs to high-potential bioisosteres (e.g., replacing aliphatic chains with hydrophilic ether groups, or adding carboxylic bioisosteres like tetrazoles or sulfonamides).
-        - Detail your specific corrections in the candidate "rationale".` : ""}
-        
-        CRITICAL: Ensure every returned molecule has a fully valid, synthetically plausible SMILES. Avoid complex rings that are impossible to synthesize.`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              required: ["smiles", "name", "rationale"],
-              properties: {
-                smiles: { type: Type.STRING, description: "Fully valid CANONICAL SMILES string of the analog" },
-                name: { type: Type.STRING, description: "Short descriptive IUPAC or common analog name" },
-                rationale: { type: Type.STRING, description: "Medicinal chemistry reason for this analog design" }
-              }
-            }
-          }
-        }
-      });
-      rawCandidates = JSON.parse(generatorResponse.text.trim());
-    } catch (err: any) {
-      console.warn("[Pipeline Fallback] Molecule generator failed or quota exceeded. Diverting to local biosimilar mutator. Error:", err?.message || err);
-      rawCandidates = getLocalCandidatesFallback(seedStructure, numSamples);
-    }
+    const rawCandidates: Array<{ smiles: string; name: string; rationale: string }> =
+      getLocalCandidatesFallback(seedStructure, numSamples);
 
     // Step 4: Pure deterministic chemistry engine processing
     let evaluatedCandidates: Array<MolecularProperties & { 
@@ -961,36 +758,8 @@ app.post("/api/design-pipeline", async (req, res) => {
     let explanation = "Explanation skipped: No clear top candidate identified.";
     
     if (topCandidate) {
-      try {
-        const explResponse = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: `You are the Lead Scientific Integrator. Review this chemical design project:
-          Desired goal: "${brief.objective_summary}"
-          Top ranked molecule: "${topCandidate.name}" (${topCandidate.smiles})
-          
-          Evaluated parameters:
-          - Molecular Weight: ${topCandidate.mw} Da (Goal constraints check)
-          - logP Hydrophobicity: ${topCandidate.clogp}
-          - TPSA Polar Area: ${topCandidate.tpsa} Å²
-          - Hydrogen Donors/Acceptors: ${topCandidate.hbd}/${topCandidate.hba}
-          - Rotatable Bonds: ${topCandidate.rotatable_bonds}
-          - Synthetic Accessibility (1-10): ${topCandidate.sa_score}
-          - Tanimoto Similarity Distance: ${topCandidate.tanimoto_distance}
-          
-          Write an exhaustive, high-resolution Multi-Agent Scientific Audit & Validation Report for this compound in Markdown. You MUST write separate sections mimicking the internal deliberations of these 4 specialized expert scientists:
-
-          1. VALIDATION AGENT REPORT: Critically review structural safety, toxicophores, reactive electrophiles, mutagenicity risk, PAINS alert check, and potential metabolic hotspots.
-          2. RETROSYNTHESIS & SYNTHESIZABILITY AGENT REPORT: Assess synthetic accessibility (SA Score is ${topCandidate.sa_score}). Identify chiral complexity, potential disconnections, protection-group burden, and availability of starting materials.
-          3. EVIDENCE & LITERARY RETRIEVAL AGENT REPORT: Cite structurally similar reference compounds, known active targets in NCBI databases, patent landscapes for this scaffold class, and prior literature precedents.
-          4. CLINICAL EXPERIMENT PLANNING BLUEPRINT: Formulate a detailed experimental validation campaign. Suggest 3 specific non-operational assays (e.g., COX-2 cell-free assay, PAMPA permeability, hERG patch-clamp or microsomal clearance), defining exact quantitative success criteria (e.g. IC50 < 50 nM) and Go/No-Go milestones.
-
-          Ensure the tone is highly academic, rigorous, and scientist-readable. Avoid generic statements; tailor every insight to the specific molecular structure provided. Focus deep chemical reasoning on the explicit SMILES structure and biophysical properties. Let each agent critique the structure carefully.`,
-        });
-        explanation = explResponse.text.trim();
-      } catch (err: any) {
-        console.warn("[Pipeline Fallback] Report compiler failed or quota exceeded. Diverting to local multi-agent structured report. Error:", err?.message || err);
-        explanation = getLocalReportFallback(brief, topCandidate);
-      }
+      // Step 6: Deterministic multi-agent audit report derived from computed properties.
+      explanation = getLocalReportFallback(brief, topCandidate);
     }
 
     // Final consolidated report bundle

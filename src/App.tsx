@@ -703,8 +703,8 @@ export default function App() {
               <span className="text-[#0A355C] font-bold">ACTIVE PREVIEW</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Model</span>
-              <span className="text-slate-700 font-medium">gemini-3.5-flash</span>
+              <span className="text-slate-500">Engine</span>
+              <span className="text-slate-700 font-medium">deterministic-chem</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">CPU Core</span>

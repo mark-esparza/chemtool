@@ -15,6 +15,10 @@ View your app in AI Studio: https://ai.studio/apps/c037d949-48ad-4cd6-b44e-62f7e
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Run the app:
    `npm run dev`
+
+No AI/model API key is required — reaction prediction, equation balancing,
+molecular property calculation, the design pipeline, and reports all run
+deterministically on-device. Compound lookups use the public PubChem REST API
+with an offline library fallback.
