@@ -9,6 +9,17 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { calculateProperties, calculateTanimotoDistance, MolecularProperties } from "./src/lib/chemEngine.js";
+import {
+  balanceEquation,
+  verifyBalance,
+  molarMass,
+  parseFormula,
+  classifyReaction,
+  estimateEnergetics,
+  lookupKnownReaction,
+  formatEquation,
+  ReactionType,
+} from "./src/lib/reactionEngine.js";
 
 // Load environment variables
 dotenv.config();
@@ -1083,6 +1094,284 @@ app.post("/api/evaluate", (req, res) => {
     res.json(props);
   } catch (e: any) {
     res.status(500).json({ error: e.message || "Invalid SMILES structure." });
+  }
+});
+
+/**
+ * Gemini-powered product predictor for arbitrary reactant sets.
+ * Returns predicted product formulas plus qualitative reaction metadata, which
+ * are then verified and balanced deterministically by the local engine.
+ */
+async function predictReactionWithGemini(reactants: string[], conditions: string) {
+  const response = await ai.models.generateContent({
+    model: "gemini-3.5-flash",
+    contents: `You are an expert chemistry reaction predictor for a student simulator. Given the reactants below, determine the single most likely reaction and its products.
+
+Reactants: ${reactants.join(" + ")}
+${conditions ? `Conditions: ${conditions}` : "Conditions: standard (assume ignition for combustion candidates)"}
+
+Rules:
+- Use plain chemical formulas WITHOUT coefficients (e.g. "H2O", "CO2", "Fe2O3", "Ca(OH)2"). Do NOT include leading numbers; balancing is handled separately.
+- If the reactants do not react under reasonable conditions, set "reaction_occurs" to false and leave products empty.
+- Products and reactants must be mass-consistent (same elements present).
+- Give the reaction_type from: Combustion, Synthesis (Combination), Decomposition, Single Displacement, Double Displacement (Metathesis), Acid-Base Neutralization, Precipitation, Redox.
+- States use s, l, g, or aq.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        required: ["reaction_occurs", "products", "reaction_type", "observations"],
+        properties: {
+          reaction_occurs: { type: Type.BOOLEAN },
+          products: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Product formulas without coefficients" },
+          product_states: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Physical state of each product (s/l/g/aq)" },
+          reactant_states: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Physical state of each reactant (s/l/g/aq)" },
+          reaction_type: { type: Type.STRING },
+          observations: { type: Type.STRING, description: "What a student would observe (colour, gas, precipitate, temperature, light)." },
+          conditions: { type: Type.STRING, description: "Required conditions (heat, catalyst, pressure) if any." },
+          hazards: { type: Type.STRING, description: "Key laboratory safety notes for these chemicals." },
+          mechanism: { type: Type.STRING, description: "Short 2-3 sentence explanation of what happens at the molecular level." },
+        },
+      },
+    },
+  });
+  return JSON.parse(response.text.trim());
+}
+
+/**
+ * Build a Markdown analysis report describing the reaction for a chemistry student.
+ */
+function buildReactionReport(params: {
+  equation: string;
+  balanced: boolean;
+  balanceReason?: string;
+  type: string;
+  observations: string;
+  conditions?: string;
+  mechanism?: string;
+  hazards?: string;
+  energetics: { character: string; estimatedDeltaH: number; note: string };
+  species: Array<{ formula: string; role: string; coefficient: number; molarMass: number | null }>;
+  reactionOccurs: boolean;
+}): string {
+  const {
+    equation, balanced, balanceReason, type, observations, conditions,
+    mechanism, hazards, energetics, species, reactionOccurs,
+  } = params;
+
+  if (!reactionOccurs) {
+    return `## Reaction Prediction
+**No reaction is predicted** between the specified reactants under the given conditions.
+
+Not all combinations of chemicals react. This may be because the species are chemically inert toward one another, both are stable at these conditions, or a driving force (formation of a gas, precipitate, water, or a favourable electron transfer) is absent.
+
+**Suggestion:** try adjusting the conditions (add heat, a catalyst, or change concentration) or pair the reactant with a more reactive partner.`;
+  }
+
+  const massLines = species
+    .map((s) => `- **${s.coefficient > 1 ? s.coefficient + " × " : ""}${s.formula}** (${s.role}) — ${s.molarMass !== null ? s.molarMass.toFixed(2) + " g/mol" : "n/a"}`)
+    .join("\n");
+
+  return `## Balanced Equation
+\`${equation}\`
+${balanced ? "This equation is **stoichiometrically balanced** — every element is conserved between reactants and products (Law of Conservation of Mass)." : `⚠️ The predicted products could **not** be balanced as written: ${balanceReason || "check the products."} The qualitative analysis below still applies.`}
+
+## Reaction Classification
+This is a **${type}** reaction.
+
+## What You Would Observe
+${observations}
+${conditions ? `\n**Conditions required:** ${conditions}` : ""}
+
+## Energetics
+- **Thermal character:** ${energetics.character}
+- **Estimated ΔH (heuristic):** ${energetics.estimatedDeltaH} kJ/mol
+- ${energetics.note}
+
+## Molecular-Level Explanation
+${mechanism || "The reactants rearrange their bonds: old bonds break and new bonds form to yield the products above, driven toward a lower-energy, more stable arrangement."}
+
+## Species & Molar Masses
+${massLines}
+
+## Safety Notes
+${hazards || "Follow standard laboratory safety: wear goggles and gloves, work in a fume hood where gases are produced, and handle acids, bases, and oxidizers with care."}
+
+---
+*Report generated by the deterministic reaction engine. Balancing and molar masses are computed exactly; energetics are educational estimates.*`;
+}
+
+/**
+ * API Route: Predict, balance, classify and report on a chemical reaction.
+ * Works for any chemical element — the deterministic engine handles balancing
+ * and molar masses, while product prediction uses a curated knowledge base with
+ * a Gemini fallback for arbitrary reactant sets.
+ */
+app.post("/api/reaction/simulate", async (req, res) => {
+  try {
+    let { reactants, conditions } = req.body as { reactants: string[] | string; conditions?: string };
+
+    // Accept either an array or a "A + B" / "A, B" string.
+    if (typeof reactants === "string") {
+      reactants = reactants.split(/[,+]/).map((r) => r.trim()).filter(Boolean);
+    }
+    if (!Array.isArray(reactants) || reactants.length === 0) {
+      return res.status(400).json({ error: "Provide at least one reactant formula (e.g. reactants: ['CH4','O2'])." });
+    }
+    reactants = reactants.map((r) => String(r).trim()).filter(Boolean).slice(0, 6);
+    const conditionStr = (conditions || "").toString().trim();
+
+    // Safety layer — reuse the fail-closed dual-use scanner.
+    const safetyRes = isInputSafe(reactants.join(" ") + " " + conditionStr);
+    if (!safetyRes.safe) {
+      return res.status(403).json({ safety_tripped: true, error: safetyRes.reason });
+    }
+
+    // Validate every reactant is a parseable formula of real elements.
+    for (const r of reactants) {
+      try {
+        parseFormula(r);
+      } catch (e: any) {
+        return res.status(400).json({ error: `Invalid reactant formula "${r}": ${e?.message || "parse error"}. Use formulas like H2O, NaCl, C2H5OH.` });
+      }
+    }
+
+    // Predict products: knowledge base first (instant/offline), then Gemini.
+    let products: string[] = [];
+    let productStates: string[] = [];
+    let reactantStates: string[] = [];
+    let type: string = "Unclassified";
+    let observations = "";
+    let mechanism = "";
+    let hazards = "";
+    let predictedConditions = conditionStr;
+    let reactionOccurs = true;
+    let source = "knowledge-base";
+
+    const known = lookupKnownReaction(reactants);
+    if (known) {
+      products = known.products;
+      type = known.type;
+      observations = known.observations;
+      predictedConditions = conditionStr || known.conditions || "";
+      if (known.states) {
+        reactantStates = known.states.slice(0, reactants.length);
+        productStates = known.states.slice(reactants.length);
+      }
+    } else {
+      try {
+        const g = await predictReactionWithGemini(reactants, conditionStr);
+        source = "gemini";
+        reactionOccurs = g.reaction_occurs !== false;
+        products = Array.isArray(g.products) ? g.products.map((p: any) => String(p).trim()).filter(Boolean) : [];
+        productStates = Array.isArray(g.product_states) ? g.product_states : [];
+        reactantStates = Array.isArray(g.reactant_states) ? g.reactant_states : [];
+        type = g.reaction_type || "Unclassified";
+        observations = g.observations || "";
+        mechanism = g.mechanism || "";
+        hazards = g.hazards || "";
+        predictedConditions = conditionStr || g.conditions || "";
+        // Validate predicted product formulas; drop unparseable ones.
+        products = products.filter((p) => {
+          try {
+            parseFormula(p);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        if (products.length === 0) reactionOccurs = false;
+      } catch (err: any) {
+        console.warn("[Reaction] Gemini predictor unavailable, using deterministic classifier only. Reason:", err?.message || err);
+        source = "offline-classifier";
+        reactionOccurs = false;
+        observations = "Product prediction service is unavailable and this reactant set is not in the offline knowledge base. Provide the expected products to balance and analyze the equation.";
+      }
+    }
+
+    // Deterministic balancing + verification.
+    let balanced = false;
+    let coefficients: number[] = [];
+    let balanceReason: string | undefined;
+    let equation = reactants.join(" + ") + " → ?";
+
+    if (reactionOccurs && products.length > 0) {
+      const result = balanceEquation(reactants, products);
+      if (result.balanced && verifyBalance(reactants, products, result.coefficients)) {
+        balanced = true;
+        coefficients = result.coefficients;
+        equation = formatEquation(reactants, products, coefficients);
+      } else {
+        balanceReason = result.reason;
+        coefficients = new Array(reactants.length + products.length).fill(1);
+        equation = formatEquation(reactants, products, coefficients);
+      }
+    }
+
+    // Refine classification with the deterministic classifier when products exist.
+    if (reactionOccurs && products.length > 0 && (type === "Unclassified" || !type)) {
+      type = classifyReaction(reactants, products);
+    }
+
+    const energetics = estimateEnergetics(type as ReactionType);
+
+    // Assemble species table with molar masses and coefficients.
+    const allSpecies = [...reactants, ...products];
+    const roles = [
+      ...reactants.map(() => "reactant"),
+      ...products.map(() => "product"),
+    ];
+    const species = allSpecies.map((formula, i) => {
+      let mm: number | null = null;
+      try {
+        mm = molarMass(formula);
+      } catch {
+        mm = null;
+      }
+      return {
+        formula,
+        role: roles[i],
+        state: (i < reactants.length ? reactantStates[i] : productStates[i - reactants.length]) || "",
+        coefficient: coefficients.length ? coefficients[i] : 1,
+        molarMass: mm,
+      };
+    });
+
+    const report = buildReactionReport({
+      equation,
+      balanced,
+      balanceReason,
+      type,
+      observations,
+      conditions: predictedConditions,
+      mechanism,
+      hazards,
+      energetics,
+      species,
+      reactionOccurs,
+    });
+
+    return res.json({
+      reaction_occurs: reactionOccurs,
+      reactants,
+      products,
+      balanced,
+      balance_reason: balanceReason,
+      coefficients,
+      equation,
+      reaction_type: type,
+      observations,
+      conditions: predictedConditions,
+      mechanism,
+      hazards,
+      energetics,
+      species,
+      report,
+      source,
+    });
+  } catch (err: any) {
+    console.error("Reaction simulation failure:", err);
+    return res.status(500).json({ error: err.message || "An error occurred inside the reaction simulator." });
   }
 });
 
