@@ -1744,7 +1744,7 @@ export default function App() {
                   <Search className="w-5 h-5 text-[#0A355C]" />
                   <div>
                     <h2 className="font-bold text-slate-800 text-sm font-mono uppercase tracking-widest text-slate-850">NCBI PubChem Live Database Puller</h2>
-                    <p className="text-[11px] text-slate-500 font-sans mt-0.5">Proxy-fetch detailed factual compound parameters, crystal structures, synonyms, and printable reports from the official NIH registry databases.</p>
+                    <p className="text-[11px] text-slate-500 font-sans mt-0.5">Search <span className="font-semibold text-[#0A355C]">any chemical</span> in the official NIH PubChem registry — by name, formula, SMILES, or CID. Misspellings are auto-corrected to the nearest real compound. Returns factual properties, synonyms, structures, and printable reports.</p>
                   </div>
                 </div>
 
@@ -1755,7 +1755,7 @@ export default function App() {
                       value={pubchemQuery}
                       onChange={(e) => setPubchemQuery(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handlePubChemSearch(pubchemQuery)}
-                      placeholder="Enter Chemical Name (e.g. Sildenafil, Nicotine, Caffeine, Metformin) or SMILES..."
+                      placeholder="Search any chemical — name, formula, SMILES or CID (e.g. Benzene, Glucose, NaCl, Uranium, C6H6, 2244)…"
                       className="w-full text-sm font-mono bg-white border border-slate-200 rounded-lg p-3 text-slate-800 placeholder-slate-400 focus:outline-[#0A355C] shadow-xs select-all"
                     />
                   </div>
@@ -1776,7 +1776,7 @@ export default function App() {
                 
                 <div className="flex items-center gap-2 select-none">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider font-mono">Popular searches:</span>
-                  {["Ibuprofen", "Caffeine", "Acetaminophen", "Penicillin", "Aspirin"].map((t) => (
+                  {["Aspirin", "Caffeine", "Glucose", "Ethanol", "Sodium chloride", "Benzene"].map((t) => (
                     <button
                       key={t}
                       onClick={() => {

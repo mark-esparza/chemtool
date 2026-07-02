@@ -317,44 +317,85 @@ function getLocalChemicalFallback(q: string) {
   };
 }
 
+const PUBCHEM_PROPS = "CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount";
+
+/** Fetch the property record for a compound by name / smiles / cid. Returns null on a clean miss (404); throws on transport failure. */
+async function pubchemProperties(kind: "name" | "smiles" | "cid", value: string) {
+  const url = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/${kind}/${encodeURIComponent(value)}/property/${PUBCHEM_PROPS}/JSON`;
+  const r = await fetch(url);
+  // 404/400 are genuine "no such compound / bad query" answers from PubChem.
+  if (r.status === 404 || r.status === 400) return null;
+  // Anything else non-OK (403/407 egress policy, 429 rate limit, 5xx) is a
+  // reachability problem — surface it so the caller can use the offline mirror.
+  if (!r.ok) throw new Error(`PubChem returned HTTP ${r.status}`);
+  const data: any = await r.json();
+  return data?.PropertyTable?.Properties?.[0] || null;
+}
+
+/** Ask PubChem's autocomplete for the closest real compound name to a fuzzy/misspelled query. */
+async function pubchemSuggestName(q: string): Promise<string | null> {
+  try {
+    const url = `https://pubchem.ncbi.nlm.nih.gov/rest/autocomplete/compound/${encodeURIComponent(q)}/json?limit=1`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    return data?.dictionary_terms?.compound?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Offline mirror lookup restricted to the curated compounds (no procedural fabrication). */
+function getKnownCompound(q: string) {
+  const norm = q.toLowerCase().trim();
+  const knownKeys = ["naproxen", "aspirin", "ibuprofen", "caffeine", "acetaminophen", "paracetamol", "nicotine", "metformin", "sildenafil"];
+  const matched = knownKeys.find(k => norm.includes(k) || k.includes(norm));
+  return matched ? getLocalChemicalFallback(q) : null;
+}
+
 /**
- * PubChem PUG REST and Description helper with automatic fallback
+ * Resolve any chemical against the live PubChem database (name, SMILES, CID, or a
+ * fuzzy/misspelled name via autocomplete). Returns null when PubChem is reachable
+ * but has no such compound; throws only when PubChem itself cannot be reached (and
+ * the query is not one of the curated offline compounds).
  */
 async function fetchPubChemData(q: string) {
   const trimmed = q.trim();
   if (!trimmed) return null;
 
-  // Instant offline cache check for common compounds to conserve API quota and prevent rate limits
-  const norm = trimmed.toLowerCase();
-  const knownKeys = ["naproxen", "aspirin", "ibuprofen", "caffeine", "acetaminophen", "paracetamol", "nicotine", "metformin", "sildenafil"];
-  const matchedKey = knownKeys.find(k => norm.includes(k) || k.includes(norm));
-  if (matchedKey) {
-    console.log(`[Offline Cache Hit] Instant load for known compound: "${trimmed}"`);
-    return getLocalChemicalFallback(trimmed);
-  }
-
   try {
-    const isSmiles = trimmed.includes("=") || trimmed.includes("(") || trimmed.includes(")") || trimmed.includes("#") || trimmed.includes("/") || trimmed.includes("\\") || (/[0-9]/.test(trimmed) && trimmed.length > 5 && !/^[0-9]+$/.test(trimmed));
-    
-    let searchUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(trimmed)}/property/CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON`;
-    
-    if (isSmiles) {
-      searchUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(trimmed)}/property/CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON`;
-    } else if (/^[0-9]+$/.test(trimmed)) {
-      searchUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${trimmed}/property/CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON`;
+    const hasSpace = /\s/.test(trimmed);
+    const isCid = /^[0-9]+$/.test(trimmed);
+    // Treat as SMILES only when it carries SMILES-specific syntax and no spaces,
+    // so chemical names with parentheses (e.g. "iron(III) chloride") still search by name.
+    const looksSmiles = !hasSpace && !isCid && /[=#\[\]]/.test(trimmed) && /[A-Za-z]/.test(trimmed);
+
+    let properties: any = null;
+    let resolvedQuery = trimmed;
+
+    if (isCid) {
+      properties = await pubchemProperties("cid", trimmed);
+    } else if (looksSmiles) {
+      properties = await pubchemProperties("smiles", trimmed);
+    } else {
+      properties = await pubchemProperties("name", trimmed);
+      if (!properties) {
+        // Fuzzy resolve: correct spelling / partial name to the nearest real compound and retry.
+        const suggestion = await pubchemSuggestName(trimmed);
+        if (suggestion && suggestion.toLowerCase() !== trimmed.toLowerCase()) {
+          const retry = await pubchemProperties("name", suggestion);
+          if (retry) {
+            properties = retry;
+            resolvedQuery = suggestion;
+          }
+        }
+      }
     }
 
-    const response = await fetch(searchUrl);
-    if (!response.ok) {
-      console.warn(`PubChem fetch status ${response.status} for "${trimmed}". Using offline chemical library...`);
-      return getLocalChemicalFallback(trimmed);
-    }
-
-    const data: any = await response.json();
-    const properties = data?.PropertyTable?.Properties?.[0];
+    // Reaching this point means PubChem responded. A null here is a genuine "no such compound".
     if (!properties) {
-      console.warn(`No compound properties found in PubChem REST response for "${trimmed}". Using offline chemical library...`);
-      return getLocalChemicalFallback(trimmed);
+      console.warn(`PubChem has no compound matching "${trimmed}".`);
+      return null;
     }
 
     const cid = properties.CID;
@@ -392,12 +433,12 @@ async function fetchPubChemData(q: string) {
       console.error("Failed to fetch synonyms: ", e);
     }
 
-    const commonName = synonyms?.[0] || trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    const commonName = synonyms?.[0] || resolvedQuery.charAt(0).toUpperCase() + resolvedQuery.slice(1);
 
     return {
       cid,
       name: commonName,
-      iupac_name: properties.IUPACName || trimmed,
+      iupac_name: properties.IUPACName || resolvedQuery,
       smiles: properties.IsomericSMILES || properties.CanonicalSMILES,
       formula: properties.MolecularFormula,
       mw: properties.MolecularWeight,
@@ -414,9 +455,16 @@ async function fetchPubChemData(q: string) {
       websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}#section=Top`
     };
   } catch (err) {
+    // Transport failure — PubChem itself is unreachable. Fall back to the curated
+    // offline mirror for well-known compounds; otherwise report the outage honestly.
     const errorPrefix = err instanceof Error ? err.message : String(err);
-    console.log(`[PubChem Fetch] PubChem query failed for "${trimmed}". Engaging local fallback. Reason: ${errorPrefix.slice(0, 120)}`);
-    return getLocalChemicalFallback(trimmed);
+    console.log(`[PubChem Fetch] PubChem unreachable for "${trimmed}". Reason: ${errorPrefix.slice(0, 120)}`);
+    const known = getKnownCompound(trimmed);
+    if (known) {
+      console.log(`[Offline Mirror] Served "${trimmed}" from the curated offline library.`);
+      return known;
+    }
+    throw new Error(`PubChem is currently unreachable, so "${trimmed}" could not be looked up. Please check your connection and try again.`);
   }
 }
 
@@ -966,7 +1014,7 @@ app.post("/api/reaction/simulate", async (req, res) => {
       }
     }
 
-    // Predict products: knowledge base first (instant/offline), then Gemini.
+    // Predict products: curated knowledge base first, then the deterministic engine.
     let products: string[] = [];
     let productStates: string[] = [];
     let reactantStates: string[] = [];
