@@ -1,0 +1,24 @@
+name: CI
+
+# Keep main deployable: type-check the whole project on every push and PR.
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs for the same ref to avoid redundant work.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Type check (tsc --noEmit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --include=dev
+      - run: npm run lint
