@@ -69,7 +69,8 @@ export interface DesignBrief {
 }
 
 const app = express();
-const PORT = 3000;
+// Hosting platforms (Render, Cloud Run, etc.) assign the port via the PORT env var.
+const PORT = Number(process.env.PORT) || 3000;
 
 // Middleware for parsing JSON
 app.use(express.json());
