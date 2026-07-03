@@ -6,22 +6,37 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import { GoogleGenAI, Type } from "@google/genai";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { createServer as createViteServer } from "vite";
 import { calculateProperties, calculateTanimotoDistance, MolecularProperties } from "./src/lib/chemEngine.js";
+import {
+  balanceEquation,
+  verifyBalance,
+  molarMass,
+  parseFormula,
+  classifyReaction,
+  estimateEnergetics,
+  lookupKnownReaction,
+  predictProducts,
+  formatEquation,
+  ReactionType,
+} from "./src/lib/reactionEngine.js";
 
 // Load environment variables
 dotenv.config();
 
-// Initialize Google Gen AI
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Route native fetch() through an HTTP(S) proxy when one is configured, so live
+// PubChem lookups work in proxied / corporate-egress environments too. This is a
+// no-op when no proxy is set (direct outbound access).
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+if (proxyUrl) {
+  try {
+    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+    console.log(`[Network] Outbound requests routed through proxy: ${proxyUrl}`);
+  } catch (e) {
+    console.warn("[Network] Could not configure proxy dispatcher:", e instanceof Error ? e.message : e);
   }
-});
+}
 
 // Dangerous chemical keywords for Fail-Closed Input Safety
 const DANGEROUS_TERMS = [
@@ -54,7 +69,8 @@ export interface DesignBrief {
 }
 
 const app = express();
-const PORT = 3000;
+// Hosting platforms (Render, Cloud Run, etc.) assign the port via the PORT env var.
+const PORT = Number(process.env.PORT) || 3000;
 
 // Middleware for parsing JSON
 app.use(express.json());
@@ -109,326 +125,77 @@ function getParetoFrontMask(costs: number[][]): boolean[] {
   return isOptimal;
 }
 
-/**
- * PubChem PUG REST emulator fallback powered by Gemini
- */
-async function getGeminiPubChemFallback(q: string) {
+const PUBCHEM_PROPS = "CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount";
+
+/** Fetch the property record for a compound by name / smiles / cid. Returns null on a clean miss (404); throws on transport failure. */
+async function pubchemProperties(kind: "name" | "smiles" | "cid", value: string) {
+  const url = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/${kind}/${encodeURIComponent(value)}/property/${PUBCHEM_PROPS}/JSON`;
+  const r = await fetch(url);
+  // 404/400 are genuine "no such compound / bad query" answers from PubChem.
+  if (r.status === 404 || r.status === 400) return null;
+  // Anything else non-OK (403/407 egress policy, 429 rate limit, 5xx) is a
+  // reachability problem — surface it so the caller can report the outage.
+  if (!r.ok) throw new Error(`PubChem returned HTTP ${r.status}`);
+  const data: any = await r.json();
+  return data?.PropertyTable?.Properties?.[0] || null;
+}
+
+/** Ask PubChem's autocomplete for the closest real compound name to a fuzzy/misspelled query. */
+async function pubchemSuggestName(q: string): Promise<string | null> {
   try {
-    const trimmed = q.trim();
-    if (!trimmed) return null;
-    console.log(`[PubChem Fallback Engine] Querying Gemini 3.5 Flash emulator for: "${trimmed}"`);
-    
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: `You are a robust chemical databank emulator. A client is requesting verified NCBI PubChem records for the query/structure: "${trimmed}".
-      
-      Determine if this is a real chemical compound name, common drug brand, chemical formula, SMILES string, or CID.
-      If it is real, return high-precision factual biophysical properties.
-      If the spelling is slightly off, correct it to the nearest real compound (e.g. "naproxen" to Naproxen, or "caffine" to Caffeine).
-      
-      Generate a valid JSON object matching the requested schema with real or extremely realistic physical values (such as partition coefficient logP/XLogP, Molecular Weight, TPSA, Donors/Acceptors, Rotatable Bonds) matching standard chemistry, along with professional scientific writeups for descriptions, synonyms list, and valid IUPAC/Systematic name.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          required: ["cid", "name", "iupac_name", "smiles", "formula", "mw", "clogp", "tpsa", "hbd", "hba", "rotatable_bonds", "description", "descriptionSource", "synonyms"],
-          properties: {
-            cid: { type: Type.INTEGER, description: "Typical PubChem CID or mock identifier number (e.g. 3715 for naproxen, 3672 for ibuprofen)" },
-            name: { type: Type.STRING, description: "Correct common name or brand name (e.g., Naproxen, Aspirin, Ibuprofen)" },
-            iupac_name: { type: Type.STRING, description: "Official systematically formatted IUPAC name (e.g. (2S)-2-(6-methoxynaphthalen-2-yl)propanoic acid)" },
-            smiles: { type: Type.STRING, description: "Canonical or Isomeric SMILES of the target compound (e.g. CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O for Naproxen)" },
-            formula: { type: Type.STRING, description: "Molecular formula (e.g. C14H14O3 for Naproxen)" },
-            mw: { type: Type.NUMBER, description: "Molecular weight (e.g. 230.26 for Naproxen)" },
-            clogp: { type: Type.NUMBER, description: "LogP hydrophobicity partition coefficient (e.g. 3.18 for Naproxen)" },
-            tpsa: { type: Type.NUMBER, description: "TPSA in Å² (e.g. 46.5 for Naproxen)" },
-            hbd: { type: Type.INTEGER, description: "Hydrogen bond donors count (e.g. 1 for Naproxen)" },
-            hba: { type: Type.INTEGER, description: "Hydrogen bond acceptors count (e.g. 3 for Naproxen)" },
-            rotatable_bonds: { type: Type.INTEGER, description: "Rotatable bond count (e.g. 3 for Naproxen)" },
-            description: { type: Type.STRING, description: "Clinical/scientific summary description of the molecular compound, its therapeutic actions, indication, and biochemical mechanism." },
-            descriptionSource: { type: Type.STRING, description: "Reference label, e.g. 'NIH PubChem Library'" },
-            synonyms: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: "List of common clinical synonyms (up to 8 synonyms)"
-            }
-          }
-        }
-      }
-    });
-
-    const parsed = JSON.parse(response.text.trim());
-    const cid = parsed.cid || 99999;
-    return {
-      cid,
-      name: parsed.name || trimmed,
-      iupac_name: parsed.iupac_name || parsed.name || trimmed,
-      smiles: parsed.smiles || "CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O", // Naproxen fallback if string parsing empty
-      formula: parsed.formula || "C14H14O3",
-      mw: parsed.mw || 230.26,
-      clogp: parsed.clogp !== undefined ? parsed.clogp : 3.18,
-      tpsa: parsed.tpsa !== undefined ? parsed.tpsa : 46.5,
-      hbd: parsed.hbd !== undefined ? parsed.hbd : 1,
-      hba: parsed.hba !== undefined ? parsed.hba : 3,
-      rotatable_bonds: parsed.rotatable_bonds !== undefined ? parsed.rotatable_bonds : 3,
-      description: parsed.description || "No description available.",
-      descriptionSource: parsed.descriptionSource || "PubChem AI Agent Emulation",
-      descriptionUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}`,
-      synonyms: parsed.synonyms || [trimmed],
-      reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}`,
-      websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}#section=Top`
-    };
-  } catch (err) {
-    const errorPrefix = err instanceof Error ? err.message : String(err);
-    console.log(`[Database Fallback] getGeminiPubChemFallback offline shift active. Reason: ${errorPrefix.slice(0, 120)}`);
-    return getLocalChemicalFallback(q);
+    const url = `https://pubchem.ncbi.nlm.nih.gov/rest/autocomplete/compound/${encodeURIComponent(q)}/json?limit=1`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    return data?.dictionary_terms?.compound?.[0] || null;
+  } catch {
+    return null;
   }
 }
 
 /**
- * High-fidelity, zero-dependency offline chemical databank fallback
- * Handles popular clinical molecules deterministically to resist any API outage.
- */
-function getLocalChemicalFallback(q: string) {
-  const norm = q.toLowerCase().trim();
-  
-  // High-fidelity pre-compiled dataset for common user queries
-  const database: Record<string, {
-    cid: number;
-    name: string;
-    iupac_name: string;
-    smiles: string;
-    formula: string;
-    mw: number;
-    clogp: number;
-    tpsa: number;
-    hbd: number;
-    hba: number;
-    rotatable_bonds: number;
-    description: string;
-    descriptionSource: string;
-    synonyms: string[];
-  }> = {
-    naproxen: {
-      cid: 3715,
-      name: "Naproxen",
-      iupac_name: "(2S)-2-(6-methoxynaphthalen-2-yl)propanoic acid",
-      smiles: "CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O",
-      formula: "C14H14O3",
-      mw: 230.26,
-      clogp: 3.18,
-      tpsa: 46.5,
-      hbd: 1,
-      hba: 3,
-      rotatable_bonds: 3,
-      description: "Naproxen is a nonsteroidal anti-inflammatory drug (NSAID) of the propionic acid class. It acts by inhibiting both COX-1 and COX-2 enzymes to treat moderate pain, swelling, stiffness, rheumatoid arthritis, gout, and menstrual cramps.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Naproxen", "Aleve", "Naprosyn", "Anaprox", "Apranax", "Sinaflam", "Naprutene"]
-    },
-    aspirin: {
-      cid: 2244,
-      name: "Aspirin",
-      iupac_name: "2-acetyloxybenzoic acid",
-      smiles: "CC(=O)OC1=CC=CC=C1C(=O)O",
-      formula: "C9H8O4",
-      mw: 180.16,
-      clogp: 1.19,
-      tpsa: 63.6,
-      hbd: 1,
-      hba: 4,
-      rotatable_bonds: 3,
-      description: "Aspirin, also known as acetylsalicylic acid (ASA), is a classic nonsteroidal anti-inflammatory drug (NSAID) used to reduce pain, fever, or inflammation, and as an irreversible inhibitor of platelet aggregation to prevent cardiovascular events.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Aspirin", "Acetylsalicylic acid", "Ecotrin", "Bayer Aspirin", "Polopiryna", "Colfarit"]
-    },
-    ibuprofen: {
-      cid: 3672,
-      name: "Ibuprofen",
-      iupac_name: "2-[4-(2-methylpropyl)phenyl]propanoic acid",
-      smiles: "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
-      formula: "C13H18O2",
-      mw: 206.28,
-      clogp: 3.5,
-      tpsa: 37.3,
-      hbd: 1,
-      hba: 2,
-      rotatable_bonds: 4,
-      description: "Ibuprofen is a widely prescribed nonsteroidal anti-inflammatory drug (NSAID) used for treating mild to moderate pain, fever, dysmenorrhea, and inflammatory disorders such as juvenile arthritis.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Ibuprofen", "Advil", "Motrin", "Nurofen", "Brufen", "Algifor", "Antalgil"]
-    },
-    caffeine: {
-      cid: 2519,
-      name: "Caffeine",
-      iupac_name: "1,3,7-Trimethylpurine-2,6-dione",
-      smiles: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
-      formula: "C8H10N4O2",
-      mw: 194.19,
-      clogp: -0.07,
-      tpsa: 58.4,
-      hbd: 0,
-      hba: 6,
-      rotatable_bonds: 0,
-      description: "Caffeine is a key central nervous system (CNS) stimulant of the methylxanthine class. It operates primary physiological action via competitive antagonism of adenosine receptors, promoting alert states and respiratory stimulation.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Caffeine", "1,3,7-Trimethylxanthine", "Guaranine", "Theine", "NoDoz", "Alertness aid"]
-    },
-    acetaminophen: {
-      cid: 1983,
-      name: "Acetaminophen",
-      iupac_name: "N-(4-hydroxyphenyl)acetamide",
-      smiles: "CC(=O)NC1=CC=C(O)C=C1",
-      formula: "C8H9NO2",
-      mw: 151.16,
-      clogp: 0.46,
-      tpsa: 49.3,
-      hbd: 2,
-      hba: 2,
-      rotatable_bonds: 2,
-      description: "Acetaminophen (paracetamol) is a highly utilized analgesic and antipyretic compound. It works predominantly by inhibiting prostaglandin synthesis in the central nervous system, targeting mild to moderate somatic pain.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Acetaminophen", "Paracetamol", "Tylenol", "Panadol", "Calpol", "Apap", "Abensanil"]
-    },
-    paracetamol: {
-      cid: 1983,
-      name: "Paracetamol",
-      iupac_name: "N-(4-hydroxyphenyl)acetamide",
-      smiles: "CC(=O)NC1=CC=C(O)C=C1",
-      formula: "C8H9NO2",
-      mw: 151.16,
-      clogp: 0.46,
-      tpsa: 49.3,
-      hbd: 2,
-      hba: 2,
-      rotatable_bonds: 2,
-      description: "Paracetamol (acetaminophen) is a prominent analgesic and antipyretic agent used globally to relieve mild-to-moderate somatic pain and suppress idiopathic fever syndromes.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Paracetamol", "Acetaminophen", "Tylenol", "Panadol", "Doliprane", "Efferalgan"]
-    },
-    nicotine: {
-      cid: 89594,
-      name: "Nicotine",
-      iupac_name: "3-[(2S)-1-methylpyrrolidin-2-yl]pyridine",
-      smiles: "CN1CCCC1C2=CN=CC=C2",
-      formula: "C10H14N2",
-      mw: 162.23,
-      clogp: 1.17,
-      tpsa: 16.1,
-      hbd: 0,
-      hba: 2,
-      rotatable_bonds: 1,
-      description: "Nicotine is a potent parasympathomimetic stimulant alkaloid found naturally in Nicotiana tabacum. It is a highly selective agonist of the nicotinic acetylcholine receptors (nAChRs) triggering catecholamine release.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Nicotine", "Habitrol", "Nicorette", "Nicoderm", "3-(1-Methyl-2-pyrrolidinyl)pyridine"]
-    },
-    metformin: {
-      cid: 4091,
-      name: "Metformin",
-      iupac_name: "3-(diaminomethylidene)-1,1-dimethylguanidine",
-      smiles: "CNC(=N)NC(=N)N",
-      formula: "C4H11N5",
-      mw: 129.16,
-      clogp: -1.4,
-      tpsa: 88.0,
-      hbd: 3,
-      hba: 4,
-      rotatable_bonds: 2,
-      description: "Metformin is a biguanide antihyperglycemic agent. It stands as the premier first-line pharmacotherapy for Type 2 Diabetes Mellitus, working by activating AMP-activated protein kinase (AMPK) and lowering hepatic gluconeogenesis.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Metformin", "Glucophage", "Fortamet", "Glumetza", "Dimethylbiguanide"]
-    },
-    sildenafil: {
-      cid: 5212,
-      name: "Sildenafil",
-      iupac_name: "5-[2-ethoxy-5-(4-methylpiperazin-1-yl)sulfonylphenyl]-1-methyl-3-propyl-6H-pyrazolo[4,3-d]pyrimidin-7-one",
-      smiles: "CCCC1=NN(C2=C1NC(=NC2=O)C3=C(C=CC(=C3)S(=O)(=O)N4CCN(CC4)C)OCC)C",
-      formula: "C22H30N6O4S",
-      mw: 474.6,
-      clogp: 2.7,
-      tpsa: 106.1,
-      hbd: 1,
-      hba: 10,
-      rotatable_bonds: 7,
-      description: "Sildenafil is a highly selective piperazine-containing inhibitor of cGMP-specific phosphodiesterase type 5 (PDE5). It improves vasodilatory responses, treating pulmonary hypertension and erectile dysfunction under brands such as Viagra.",
-      descriptionSource: "Offline NIH PubChem Mirror",
-      synonyms: ["Sildenafil", "Viagra", "Revatio", "Sildenafil citrate", "UK-92,480"]
-    }
-  };
-
-  // Check static matches e.g. "naproxen", "naproxen sodium"
-  const matchedKey = Object.keys(database).find(k => norm.includes(k) || k.includes(norm));
-  
-  if (matchedKey) {
-    const data = database[matchedKey];
-    return {
-      ...data,
-      descriptionUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${data.cid}`,
-      reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${data.cid}`,
-      websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${data.cid}#section=Top`
-    };
-  }
-
-  // Procedural generator fallback for arbitrary user-entered queries
-  console.log(`[Procedural Fallback] Creating a realistic procedural chemical model for: "${q}"`);
-  const mockCid = Math.floor(Math.random() * 50000) + 10000;
-  return {
-    cid: mockCid,
-    name: q.charAt(0).toUpperCase() + q.slice(1),
-    iupac_name: `Procedural IUPAC-[${q.toUpperCase()}]-SCAFFOLD`,
-    smiles: "CC1=CC(=CC(=C1O)C)C2=CC=C(C=C2)C(=O)O", // Procedural scaffold
-    formula: "C16H16O3",
-    mw: 256.30,
-    clogp: 2.85,
-    tpsa: 46.5,
-    hbd: 1,
-    hba: 3,
-    rotatable_bonds: 3,
-    description: `Procedurally formulated database record for ${q}. Retreived via local secondary simulation models. Plausible therapeutic scaffold with active functionalized aromatic hubs.`,
-    descriptionSource: "Procedural Analog Hub Sim",
-    descriptionUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${mockCid}`,
-    synonyms: [q, `${q} Analog`, `${q} Sodium`, `Clinical-Compound-${mockCid}`],
-    reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${mockCid}`,
-    websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${mockCid}#section=Top`
-  };
-}
-
-/**
- * PubChem PUG REST and Description helper with automatic fallback
+ * Resolve any chemical against the live PubChem database (name, SMILES, CID, or a
+ * fuzzy/misspelled name via autocomplete). Always routes to PubChem — there is no
+ * offline data path. Returns null when PubChem is reachable but has no such
+ * compound; throws when PubChem itself cannot be reached.
  */
 async function fetchPubChemData(q: string) {
   const trimmed = q.trim();
   if (!trimmed) return null;
 
-  // Instant offline cache check for common compounds to conserve API quota and prevent rate limits
-  const norm = trimmed.toLowerCase();
-  const knownKeys = ["naproxen", "aspirin", "ibuprofen", "caffeine", "acetaminophen", "paracetamol", "nicotine", "metformin", "sildenafil"];
-  const matchedKey = knownKeys.find(k => norm.includes(k) || k.includes(norm));
-  if (matchedKey) {
-    console.log(`[Offline Cache Hit] Instant load for known compound: "${trimmed}"`);
-    return getLocalChemicalFallback(trimmed);
-  }
-
   try {
-    const isSmiles = trimmed.includes("=") || trimmed.includes("(") || trimmed.includes(")") || trimmed.includes("#") || trimmed.includes("/") || trimmed.includes("\\") || (/[0-9]/.test(trimmed) && trimmed.length > 5 && !/^[0-9]+$/.test(trimmed));
-    
-    let searchUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(trimmed)}/property/CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON`;
-    
-    if (isSmiles) {
-      searchUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(trimmed)}/property/CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON`;
-    } else if (/^[0-9]+$/.test(trimmed)) {
-      searchUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${trimmed}/property/CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON`;
+    const hasSpace = /\s/.test(trimmed);
+    const isCid = /^[0-9]+$/.test(trimmed);
+    // Treat as SMILES only when it carries SMILES-specific syntax and no spaces,
+    // so chemical names with parentheses (e.g. "iron(III) chloride") still search by name.
+    const looksSmiles = !hasSpace && !isCid && /[=#\[\]]/.test(trimmed) && /[A-Za-z]/.test(trimmed);
+
+    let properties: any = null;
+    let resolvedQuery = trimmed;
+
+    if (isCid) {
+      properties = await pubchemProperties("cid", trimmed);
+    } else if (looksSmiles) {
+      properties = await pubchemProperties("smiles", trimmed);
+    } else {
+      properties = await pubchemProperties("name", trimmed);
+      if (!properties) {
+        // Fuzzy resolve: correct spelling / partial name to the nearest real compound and retry.
+        const suggestion = await pubchemSuggestName(trimmed);
+        if (suggestion && suggestion.toLowerCase() !== trimmed.toLowerCase()) {
+          const retry = await pubchemProperties("name", suggestion);
+          if (retry) {
+            properties = retry;
+            resolvedQuery = suggestion;
+          }
+        }
+      }
     }
 
-    const response = await fetch(searchUrl);
-    if (!response.ok) {
-      console.warn(`PubChem fetch status ${response.status} for "${trimmed}". Invoking Gemini fallback...`);
-      return await getGeminiPubChemFallback(trimmed);
-    }
-
-    const data: any = await response.json();
-    const properties = data?.PropertyTable?.Properties?.[0];
+    // Reaching this point means PubChem responded. A null here is a genuine "no such compound".
     if (!properties) {
-      console.warn(`No compound properties found in PubChem REST response for "${trimmed}". Invoking Gemini fallback...`);
-      return await getGeminiPubChemFallback(trimmed);
+      console.warn(`PubChem has no compound matching "${trimmed}".`);
+      return null;
     }
 
     const cid = properties.CID;
@@ -466,12 +233,12 @@ async function fetchPubChemData(q: string) {
       console.error("Failed to fetch synonyms: ", e);
     }
 
-    const commonName = synonyms?.[0] || trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    const commonName = synonyms?.[0] || resolvedQuery.charAt(0).toUpperCase() + resolvedQuery.slice(1);
 
     return {
       cid,
       name: commonName,
-      iupac_name: properties.IUPACName || trimmed,
+      iupac_name: properties.IUPACName || resolvedQuery,
       smiles: properties.IsomericSMILES || properties.CanonicalSMILES,
       formula: properties.MolecularFormula,
       mw: properties.MolecularWeight,
@@ -488,9 +255,11 @@ async function fetchPubChemData(q: string) {
       websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}#section=Top`
     };
   } catch (err) {
+    // Transport failure — PubChem itself could not be reached. Report it honestly;
+    // there is no offline data path.
     const errorPrefix = err instanceof Error ? err.message : String(err);
-    console.log(`[PubChem Fetch] PubChem query failed for "${trimmed}". Engaging local fallback. Reason: ${errorPrefix.slice(0, 120)}`);
-    return await getGeminiPubChemFallback(trimmed);
+    console.log(`[PubChem Fetch] PubChem unreachable for "${trimmed}". Reason: ${errorPrefix.slice(0, 120)}`);
+    throw new Error(`PubChem is currently unreachable, so "${trimmed}" could not be looked up. Check the server's network connection to pubchem.ncbi.nlm.nih.gov and try again.`);
   }
 }
 
@@ -727,130 +496,13 @@ app.post("/api/design-pipeline", async (req, res) => {
       });
     }
 
-    // Step 2: Spec Compiler (LLM translation to strict JSON Brief, integrating experimental feedback)
-    let brief: DesignBrief;
-    try {
-      const specResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Translate this text-to-molecule chemical design goal into a validated Pydantic-like JSON design brief:
-        
-        User request: "${prompt}"
+    // Step 2: Spec Compiler — deterministically translate the goal into a strict design brief.
+    const brief: DesignBrief = getLocalBriefFallback(prompt);
 
-        ${experiments && experiments.length > 0 ? `
-        CRITICAL - CLOSED-LOOP EXPERIMENTAL FEEDBACK ACTIVE:
-        The researcher has uploaded historical real-world lab outcomes from past design runs of this scaffold class:
-        ${JSON.stringify(experiments, null, 2)}
-        
-        Analyze these real-world lab assays! Incorporate lessons from these failures and partial successes. If previous analogs had poor solubility (high clogp), safety filters, or low potency under specific structural variations, actively adjust the brief. Update 'property_constraints' or add structural alerts keyword filters to the 'must_avoid_alerts' list to direct synthesis away from these pitfalls.` : ""}
-
-        Extract:
-        1. A one-sentence 'objective_summary'.
-        2. A 'seed_smiles' (find a biologically relevant seed SMILES mentioned, e.g. Aspirin (CC(=O)OC1=CC=CC=C1C(=O)O), Ibuprofen, Caffeine, Acetaminophen, or select a molecular scaffold matching the context).
-        3. An array of 'property_constraints' targeting relevant properties (e.g. logP, mw, tpsa, hbd, hba).
-        4. Avoided structural alerts (e.g. PAINS, Brenk).
-        5. Novelty boundaries relative to seed.`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["objective_summary", "seed_smiles", "property_constraints", "novelty", "must_avoid_alerts", "confidence_required"],
-            properties: {
-              objective_summary: { type: Type.STRING, description: "Descriptive objective brief" },
-              seed_smiles: { type: Type.STRING, description: "Seed scaffold SMILES string" },
-              property_constraints: {
-                type: Type.ARRAY,
-                description: "Array of molecular design filter targets",
-                items: {
-                  type: Type.OBJECT,
-                  required: ["name", "op", "value", "weight", "hard"],
-                  properties: {
-                    name: { type: Type.STRING, description: "Property key (mw, clogp, tpsa, hbd, hba, rotatable_bonds)" },
-                    op: { type: Type.STRING, enum: ["<=", ">=", "=="] },
-                    value: { type: Type.NUMBER },
-                    weight: { type: Type.NUMBER },
-                    hard: { type: Type.BOOLEAN }
-                  }
-                }
-              },
-              admet_limits: {
-                type: Type.OBJECT,
-                properties: {
-                  h_absorption: { type: Type.STRING }
-                }
-              },
-              novelty: {
-                type: Type.OBJECT,
-                required: ["min_tanimoto_distance_from_seed", "max"],
-                properties: {
-                  min_tanimoto_distance_from_seed: { type: Type.NUMBER },
-                  max: { type: Type.NUMBER }
-                }
-              },
-              must_avoid_alerts: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-              confidence_required: { type: Type.STRING, enum: ["low", "medium", "high"] },
-              notes: { type: Type.STRING }
-            }
-          }
-        }
-      });
-      brief = JSON.parse(specResponse.text.trim());
-    } catch (err: any) {
-      console.warn("[Pipeline Fallback] Spec Compiler failed or quota exceeded. Diverting to local chemical brief designer. Error:", err?.message || err);
-      brief = getLocalBriefFallback(prompt);
-    }
-
-    // Step 3: LLM Candidate Generator (Stoned-style analog enumeration around the seed SMILES)
+    // Step 3: Candidate Generator — deterministic analog enumeration around the seed scaffold.
     const seedStructure = brief.seed_smiles || "CC(=O)OC1=CC=CC=C1C(=O)O";
-    let rawCandidates: Array<{ smiles: string; name: string; rationale: string }> = [];
-    
-    try {
-      const generatorResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `You are an organic chemistry generator agent. Your task is to generate exactly ${numSamples} chemical analogs mutated around the target seed scaffold:
-        
-        Seed SMILES: "${seedStructure}"
-        Design Goal: "${brief.objective_summary}"
-
-        To design realistic analogs, perform typical medicinal chemistry or bioisosteric transformations:
-        - Functional group substitutions (e.g. ester to amide, nitro to amine, fluorination, methoxy groups).
-        - Minor sidechain extensions/truncations.
-        - Bioisosteric ring substitutions.
-
-        ${experiments && experiments.length > 0 ? `
-        CRITICAL - ANALYZE LABORATORY OUTCOMES:
-        These are the real-world lab metrics from previous attempts:
-        ${JSON.stringify(experiments, null, 2)}
-
-        IMPORTANT DIRECTIVES:
-        - DO NOT generate chemical entities that duplicate failed molecules!
-        - If a structural feature or motif in previous experiments caused poor solubility, low potency or safety alarms, actively mutate those motifs to high-potential bioisosteres (e.g., replacing aliphatic chains with hydrophilic ether groups, or adding carboxylic bioisosteres like tetrazoles or sulfonamides).
-        - Detail your specific corrections in the candidate "rationale".` : ""}
-        
-        CRITICAL: Ensure every returned molecule has a fully valid, synthetically plausible SMILES. Avoid complex rings that are impossible to synthesize.`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              required: ["smiles", "name", "rationale"],
-              properties: {
-                smiles: { type: Type.STRING, description: "Fully valid CANONICAL SMILES string of the analog" },
-                name: { type: Type.STRING, description: "Short descriptive IUPAC or common analog name" },
-                rationale: { type: Type.STRING, description: "Medicinal chemistry reason for this analog design" }
-              }
-            }
-          }
-        }
-      });
-      rawCandidates = JSON.parse(generatorResponse.text.trim());
-    } catch (err: any) {
-      console.warn("[Pipeline Fallback] Molecule generator failed or quota exceeded. Diverting to local biosimilar mutator. Error:", err?.message || err);
-      rawCandidates = getLocalCandidatesFallback(seedStructure, numSamples);
-    }
+    const rawCandidates: Array<{ smiles: string; name: string; rationale: string }> =
+      getLocalCandidatesFallback(seedStructure, numSamples);
 
     // Step 4: Pure deterministic chemistry engine processing
     let evaluatedCandidates: Array<MolecularProperties & { 
@@ -949,36 +601,8 @@ app.post("/api/design-pipeline", async (req, res) => {
     let explanation = "Explanation skipped: No clear top candidate identified.";
     
     if (topCandidate) {
-      try {
-        const explResponse = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: `You are the Lead Scientific Integrator. Review this chemical design project:
-          Desired goal: "${brief.objective_summary}"
-          Top ranked molecule: "${topCandidate.name}" (${topCandidate.smiles})
-          
-          Evaluated parameters:
-          - Molecular Weight: ${topCandidate.mw} Da (Goal constraints check)
-          - logP Hydrophobicity: ${topCandidate.clogp}
-          - TPSA Polar Area: ${topCandidate.tpsa} Å²
-          - Hydrogen Donors/Acceptors: ${topCandidate.hbd}/${topCandidate.hba}
-          - Rotatable Bonds: ${topCandidate.rotatable_bonds}
-          - Synthetic Accessibility (1-10): ${topCandidate.sa_score}
-          - Tanimoto Similarity Distance: ${topCandidate.tanimoto_distance}
-          
-          Write an exhaustive, high-resolution Multi-Agent Scientific Audit & Validation Report for this compound in Markdown. You MUST write separate sections mimicking the internal deliberations of these 4 specialized expert scientists:
-
-          1. VALIDATION AGENT REPORT: Critically review structural safety, toxicophores, reactive electrophiles, mutagenicity risk, PAINS alert check, and potential metabolic hotspots.
-          2. RETROSYNTHESIS & SYNTHESIZABILITY AGENT REPORT: Assess synthetic accessibility (SA Score is ${topCandidate.sa_score}). Identify chiral complexity, potential disconnections, protection-group burden, and availability of starting materials.
-          3. EVIDENCE & LITERARY RETRIEVAL AGENT REPORT: Cite structurally similar reference compounds, known active targets in NCBI databases, patent landscapes for this scaffold class, and prior literature precedents.
-          4. CLINICAL EXPERIMENT PLANNING BLUEPRINT: Formulate a detailed experimental validation campaign. Suggest 3 specific non-operational assays (e.g., COX-2 cell-free assay, PAMPA permeability, hERG patch-clamp or microsomal clearance), defining exact quantitative success criteria (e.g. IC50 < 50 nM) and Go/No-Go milestones.
-
-          Ensure the tone is highly academic, rigorous, and scientist-readable. Avoid generic statements; tailor every insight to the specific molecular structure provided. Focus deep chemical reasoning on the explicit SMILES structure and biophysical properties. Let each agent critique the structure carefully.`,
-        });
-        explanation = explResponse.text.trim();
-      } catch (err: any) {
-        console.warn("[Pipeline Fallback] Report compiler failed or quota exceeded. Diverting to local multi-agent structured report. Error:", err?.message || err);
-        explanation = getLocalReportFallback(brief, topCandidate);
-      }
+      // Step 6: Deterministic multi-agent audit report derived from computed properties.
+      explanation = getLocalReportFallback(brief, topCandidate);
     }
 
     // Final consolidated report bundle
@@ -1083,6 +707,242 @@ app.post("/api/evaluate", (req, res) => {
     res.json(props);
   } catch (e: any) {
     res.status(500).json({ error: e.message || "Invalid SMILES structure." });
+  }
+});
+
+/**
+ * Build a Markdown analysis report describing the reaction for a chemistry student.
+ */
+function buildReactionReport(params: {
+  equation: string;
+  balanced: boolean;
+  balanceReason?: string;
+  type: string;
+  observations: string;
+  conditions?: string;
+  mechanism?: string;
+  hazards?: string;
+  energetics: { character: string; estimatedDeltaH: number; note: string };
+  species: Array<{ formula: string; role: string; coefficient: number; molarMass: number | null }>;
+  reactionOccurs: boolean;
+  reason?: string;
+}): string {
+  const {
+    equation, balanced, balanceReason, type, observations, conditions,
+    mechanism, hazards, energetics, species, reactionOccurs, reason,
+  } = params;
+
+  if (!reactionOccurs) {
+    return `## Reaction Prediction
+**No reaction is predicted** between the specified reactants under the given conditions.
+
+${reason || "Not all combinations of chemicals react. This may be because the species are chemically inert toward one another, both are stable at these conditions, or a driving force (formation of a gas, precipitate, water, or a favourable electron transfer) is absent."}
+
+**Suggestion:** try adjusting the conditions (add heat, a catalyst, or change concentration) or pair the reactant with a more reactive partner.`;
+  }
+
+  const massLines = species
+    .map((s) => `- **${s.coefficient > 1 ? s.coefficient + " × " : ""}${s.formula}** (${s.role}) — ${s.molarMass !== null ? s.molarMass.toFixed(2) + " g/mol" : "n/a"}`)
+    .join("\n");
+
+  return `## Balanced Equation
+\`${equation}\`
+${balanced ? "This equation is **stoichiometrically balanced** — every element is conserved between reactants and products (Law of Conservation of Mass)." : `⚠️ The predicted products could **not** be balanced as written: ${balanceReason || "check the products."} The qualitative analysis below still applies.`}
+
+## Reaction Classification
+This is a **${type}** reaction.
+
+## What You Would Observe
+${observations}
+${conditions ? `\n**Conditions required:** ${conditions}` : ""}
+
+## Energetics
+- **Thermal character:** ${energetics.character}
+- **Estimated ΔH (heuristic):** ${energetics.estimatedDeltaH} kJ/mol
+- ${energetics.note}
+
+## Molecular-Level Explanation
+${mechanism || "The reactants rearrange their bonds: old bonds break and new bonds form to yield the products above, driven toward a lower-energy, more stable arrangement."}
+
+## Species & Molar Masses
+${massLines}
+
+## Safety Notes
+${hazards || "Follow standard laboratory safety: wear goggles and gloves, work in a fume hood where gases are produced, and handle acids, bases, and oxidizers with care."}
+
+---
+*Report generated by the deterministic reaction engine. Balancing and molar masses are computed exactly; energetics are educational estimates.*`;
+}
+
+/**
+ * API Route: Predict, balance, classify and report on a chemical reaction.
+ * Works for any chemical element — the deterministic engine handles balancing
+ * and molar masses, while product prediction uses a curated knowledge base with
+ * a Gemini fallback for arbitrary reactant sets.
+ */
+app.post("/api/reaction/simulate", async (req, res) => {
+  try {
+    let { reactants, conditions } = req.body as { reactants: string[] | string; conditions?: string };
+
+    // Accept either an array or a "A + B" / "A, B" string.
+    if (typeof reactants === "string") {
+      reactants = reactants.split(/[,+]/).map((r) => r.trim()).filter(Boolean);
+    }
+    if (!Array.isArray(reactants) || reactants.length === 0) {
+      return res.status(400).json({ error: "Provide at least one reactant formula (e.g. reactants: ['CH4','O2'])." });
+    }
+    reactants = reactants.map((r) => String(r).trim()).filter(Boolean).slice(0, 6);
+    const conditionStr = (conditions || "").toString().trim();
+
+    // Safety layer — reuse the fail-closed dual-use scanner.
+    const safetyRes = isInputSafe(reactants.join(" ") + " " + conditionStr);
+    if (!safetyRes.safe) {
+      return res.status(403).json({ safety_tripped: true, error: safetyRes.reason });
+    }
+
+    // Validate every reactant is a parseable formula of real elements.
+    for (const r of reactants) {
+      try {
+        parseFormula(r);
+      } catch (e: any) {
+        return res.status(400).json({ error: `Invalid reactant formula "${r}": ${e?.message || "parse error"}. Use formulas like H2O, NaCl, C2H5OH.` });
+      }
+    }
+
+    // Predict products: curated knowledge base first, then the deterministic engine.
+    let products: string[] = [];
+    let productStates: string[] = [];
+    let reactantStates: string[] = [];
+    let type: string = "Unclassified";
+    let observations = "";
+    let mechanism = "";
+    let hazards = "";
+    let predictedConditions = conditionStr;
+    let reactionOccurs = true;
+    let source = "knowledge-base";
+
+    let predictionReason: string | undefined;
+    const known = lookupKnownReaction(reactants);
+    if (known) {
+      products = known.products;
+      type = known.type;
+      observations = known.observations;
+      predictedConditions = conditionStr || known.conditions || "";
+      if (known.states) {
+        reactantStates = known.states.slice(0, reactants.length);
+        productStates = known.states.slice(reactants.length);
+      }
+    } else {
+      // Deterministic rule-based prediction — no external model involved.
+      const p = predictProducts(reactants, conditionStr);
+      source = "deterministic-engine";
+      reactionOccurs = p.reactionOccurs;
+      products = p.products;
+      productStates = p.productStates;
+      reactantStates = p.reactantStates;
+      type = p.type;
+      observations = p.observations;
+      mechanism = p.mechanism || "";
+      hazards = p.hazards || "";
+      predictedConditions = conditionStr || p.conditions || "";
+      predictionReason = p.reason;
+      // Validate predicted product formulas; drop anything unparseable.
+      products = products.filter((prod) => {
+        try {
+          parseFormula(prod);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (reactionOccurs && products.length === 0) reactionOccurs = false;
+    }
+
+    // Deterministic balancing + verification.
+    let balanced = false;
+    let coefficients: number[] = [];
+    let balanceReason: string | undefined;
+    let equation = reactants.join(" + ") + " → ?";
+
+    if (reactionOccurs && products.length > 0) {
+      const result = balanceEquation(reactants, products);
+      if (result.balanced && verifyBalance(reactants, products, result.coefficients)) {
+        balanced = true;
+        coefficients = result.coefficients;
+        equation = formatEquation(reactants, products, coefficients);
+      } else {
+        balanceReason = result.reason;
+        coefficients = new Array(reactants.length + products.length).fill(1);
+        equation = formatEquation(reactants, products, coefficients);
+      }
+    }
+
+    // Refine classification with the deterministic classifier when products exist.
+    if (reactionOccurs && products.length > 0 && (type === "Unclassified" || !type)) {
+      type = classifyReaction(reactants, products);
+    }
+
+    const energetics = estimateEnergetics(type as ReactionType);
+
+    // Assemble species table with molar masses and coefficients.
+    const allSpecies = [...reactants, ...products];
+    const roles = [
+      ...reactants.map(() => "reactant"),
+      ...products.map(() => "product"),
+    ];
+    const species = allSpecies.map((formula, i) => {
+      let mm: number | null = null;
+      try {
+        mm = molarMass(formula);
+      } catch {
+        mm = null;
+      }
+      return {
+        formula,
+        role: roles[i],
+        state: (i < reactants.length ? reactantStates[i] : productStates[i - reactants.length]) || "",
+        coefficient: coefficients.length ? coefficients[i] : 1,
+        molarMass: mm,
+      };
+    });
+
+    const report = buildReactionReport({
+      equation,
+      balanced,
+      balanceReason,
+      type,
+      observations,
+      conditions: predictedConditions,
+      mechanism,
+      hazards,
+      energetics,
+      species,
+      reactionOccurs,
+      reason: predictionReason,
+    });
+
+    return res.json({
+      reaction_occurs: reactionOccurs,
+      reactants,
+      products,
+      balanced,
+      balance_reason: balanceReason,
+      reason: predictionReason,
+      coefficients,
+      equation,
+      reaction_type: type,
+      observations,
+      conditions: predictedConditions,
+      mechanism,
+      hazards,
+      energetics,
+      species,
+      report,
+      source,
+    });
+  } catch (err: any) {
+    console.error("Reaction simulation failure:", err);
+    return res.status(500).json({ error: err.message || "An error occurred inside the reaction simulator." });
   }
 });
 

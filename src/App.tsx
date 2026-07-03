@@ -27,7 +27,12 @@ import {
   GitCompare,
   Plus,
   X,
-  ChevronRight
+  ChevronRight,
+  FlaskConical,
+  Flame,
+  Zap,
+  Scale,
+  Beaker
 } from "lucide-react";
 import StructureRenderer from "./components/StructureRenderer";
 import { MolecularProperties } from "./lib/chemEngine";
@@ -313,7 +318,24 @@ export default function App() {
   const [safetyReason, setSafetyReason] = useState<string>("");
 
   // View Controller Tab
-  const [viewMode, setViewMode] = useState<"design" | "pubchem" | "batch" | "experiments">("design");
+  const [viewMode, setViewMode] = useState<"design" | "pubchem" | "batch" | "experiments" | "reaction">("design");
+
+  // Reaction Simulator state
+  const [reactionInput, setReactionInput] = useState("CH4 + O2");
+  const [reactionConditions, setReactionConditions] = useState("");
+  const [reactionResult, setReactionResult] = useState<any>(null);
+  const [reactionLoading, setReactionLoading] = useState(false);
+  const [reactionError, setReactionError] = useState("");
+  const [reactionSafety, setReactionSafety] = useState("");
+
+  const reactionPresets = [
+    { title: "Methane combustion", input: "CH4 + O2", conditions: "Ignition, excess O₂" },
+    { title: "Zinc + hydrochloric acid", input: "Zn + HCl", conditions: "" },
+    { title: "Neutralization", input: "HCl + NaOH", conditions: "" },
+    { title: "Silver chloride precipitate", input: "AgNO3 + NaCl", conditions: "Aqueous solution" },
+    { title: "Thermite (redox)", input: "Al + Fe2O3", conditions: "High heat ignition" },
+    { title: "Photosynthesis (reverse combustion)", input: "C6H12O6 + O2", conditions: "" },
+  ];
 
   // Lead Lab History state
   const [experiments, setExperiments] = useState<Experiment[]>(() => {
@@ -545,6 +567,41 @@ export default function App() {
     }
   };
 
+  // Reaction Simulator handler
+  const runReactionSimulation = async (inputStr: string, conditionsStr: string) => {
+    if (!inputStr.trim()) return;
+    setReactionLoading(true);
+    setReactionError("");
+    setReactionSafety("");
+    setReactionResult(null);
+
+    const reactants = inputStr
+      .split(/[,+]/)
+      .map((r) => r.trim())
+      .filter(Boolean);
+
+    try {
+      const response = await fetch("/api/reaction/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reactants, conditions: conditionsStr }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 403 && data.safety_tripped) {
+          setReactionSafety(data.error || "Dangerous dual-use safety concern triggered.");
+          return;
+        }
+        throw new Error(data.error || "Reaction simulation failed.");
+      }
+      setReactionResult(data);
+    } catch (e: any) {
+      setReactionError(e.message || "Failed to reach the reaction simulator service.");
+    } finally {
+      setReactionLoading(false);
+    }
+  };
+
   // Load defaults on render
   useEffect(() => {
     handleSandboxScan();
@@ -646,8 +703,8 @@ export default function App() {
               <span className="text-[#0A355C] font-bold">ACTIVE PREVIEW</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Model</span>
-              <span className="text-slate-700 font-medium">gemini-3.5-flash</span>
+              <span className="text-slate-500">Engine</span>
+              <span className="text-slate-700 font-medium">deterministic-chem</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">CPU Core</span>
@@ -735,6 +792,22 @@ export default function App() {
             >
               <GitCompare className="w-4 h-4 text-[#0A355C]" />
               <span>PubChem Batch Matrix</span>
+            </button>
+            <button
+              onClick={() => {
+                setViewMode("reaction");
+                if (!reactionResult) {
+                  runReactionSimulation(reactionInput, reactionConditions);
+                }
+              }}
+              className={`px-4 py-2 text-xs font-mono font-bold uppercase tracking-wider rounded-md transition-all flex items-center gap-2 cursor-pointer ${
+                viewMode === "reaction"
+                  ? "bg-white text-[#0A355C] shadow-sm border border-slate-200/40"
+                  : "text-slate-500 hover:text-slate-900 border border-transparent"
+              }`}
+            >
+              <FlaskConical className="w-4 h-4 text-[#0A355C]" />
+              <span>Reaction Simulator</span>
             </button>
             <button
               onClick={() => setViewMode("experiments")}
@@ -1671,7 +1744,7 @@ export default function App() {
                   <Search className="w-5 h-5 text-[#0A355C]" />
                   <div>
                     <h2 className="font-bold text-slate-800 text-sm font-mono uppercase tracking-widest text-slate-850">NCBI PubChem Live Database Puller</h2>
-                    <p className="text-[11px] text-slate-500 font-sans mt-0.5">Proxy-fetch detailed factual compound parameters, crystal structures, synonyms, and printable reports from the official NIH registry databases.</p>
+                    <p className="text-[11px] text-slate-500 font-sans mt-0.5">Search <span className="font-semibold text-[#0A355C]">any chemical</span> in the official NIH PubChem registry — by name, formula, SMILES, or CID. Misspellings are auto-corrected to the nearest real compound. Returns factual properties, synonyms, structures, and printable reports.</p>
                   </div>
                 </div>
 
@@ -1682,7 +1755,7 @@ export default function App() {
                       value={pubchemQuery}
                       onChange={(e) => setPubchemQuery(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handlePubChemSearch(pubchemQuery)}
-                      placeholder="Enter Chemical Name (e.g. Sildenafil, Nicotine, Caffeine, Metformin) or SMILES..."
+                      placeholder="Search any chemical — name, formula, SMILES or CID (e.g. Benzene, Glucose, NaCl, Uranium, C6H6, 2244)…"
                       className="w-full text-sm font-mono bg-white border border-slate-200 rounded-lg p-3 text-slate-800 placeholder-slate-400 focus:outline-[#0A355C] shadow-xs select-all"
                     />
                   </div>
@@ -1703,7 +1776,7 @@ export default function App() {
                 
                 <div className="flex items-center gap-2 select-none">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider font-mono">Popular searches:</span>
-                  {["Ibuprofen", "Caffeine", "Acetaminophen", "Penicillin", "Aspirin"].map((t) => (
+                  {["Aspirin", "Caffeine", "Glucose", "Ethanol", "Sodium chloride", "Benzene"].map((t) => (
                     <button
                       key={t}
                       onClick={() => {
@@ -2597,6 +2670,245 @@ export default function App() {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* REACTION SIMULATOR WORKSPACE VIEW */}
+        {viewMode === "reaction" && (
+          <div className="px-6 sm:px-8 pb-8 mt-4 animate-fadeIn text-left" id="reaction_simulator_view">
+            {/* Input console */}
+            <div className="bg-white border border-slate-200/80 shadow-xs rounded-xl p-5 mb-6">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-4">
+                <FlaskConical className="w-4 h-4 text-[#0A355C]" />
+                <h3 className="font-bold text-xs font-mono uppercase tracking-widest text-slate-800">Chemical Reaction Predictor & Balancer</h3>
+                <span className="text-[9px] font-mono text-slate-400 ml-auto uppercase tracking-wider">Any element · Full periodic table</span>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
+                <div className="lg:col-span-6">
+                  <label className="text-[10px] text-slate-400 uppercase font-mono tracking-widest block mb-1.5 font-semibold">Reactants (separate with + or ,)</label>
+                  <input
+                    type="text"
+                    value={reactionInput}
+                    onChange={(e) => setReactionInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") runReactionSimulation(reactionInput, reactionConditions); }}
+                    disabled={reactionLoading}
+                    placeholder="e.g. CH4 + O2   or   Fe2O3, Al"
+                    className="w-full text-sm font-mono bg-white border border-slate-200 rounded p-2.5 text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-[#0A355C] shadow-xs select-all"
+                  />
+                </div>
+                <div className="lg:col-span-3">
+                  <label className="text-[10px] text-slate-400 uppercase font-mono tracking-widest block mb-1.5 font-semibold">Conditions (optional)</label>
+                  <input
+                    type="text"
+                    value={reactionConditions}
+                    onChange={(e) => setReactionConditions(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") runReactionSimulation(reactionInput, reactionConditions); }}
+                    disabled={reactionLoading}
+                    placeholder="heat, catalyst, aqueous…"
+                    className="w-full text-xs font-mono bg-white border border-slate-200 rounded p-2.5 text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-[#0A355C] shadow-xs"
+                  />
+                </div>
+                <div className="lg:col-span-3">
+                  <button
+                    onClick={() => runReactionSimulation(reactionInput, reactionConditions)}
+                    disabled={reactionLoading || !reactionInput.trim()}
+                    className="w-full px-4 py-2.5 bg-[#0A355C] hover:bg-[#07243E] text-white font-bold text-xs uppercase tracking-wider rounded font-mono transition-all disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {reactionLoading ? (
+                      <><Cpu className="w-3.5 h-3.5 animate-spin" /> Simulating…</>
+                    ) : (
+                      <><Zap className="w-3.5 h-3.5" /> Predict Reaction</>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Presets */}
+              <div className="flex flex-wrap gap-1.5 mt-4">
+                {reactionPresets.map((p, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setReactionInput(p.input);
+                      setReactionConditions(p.conditions);
+                      runReactionSimulation(p.input, p.conditions);
+                    }}
+                    disabled={reactionLoading}
+                    className="text-[10px] font-mono px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-[#0A355C] hover:border-[#0A355C]/40 transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {p.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {reactionError && (
+              <div className="mb-6 p-3 bg-rose-50 text-rose-700 font-mono text-xs rounded border border-rose-200/60 leading-relaxed">
+                [ERROR] {reactionError}
+              </div>
+            )}
+
+            {reactionSafety && (
+              <div className="mb-6 bg-rose-50 border border-rose-200 rounded-xl p-5 flex gap-4">
+                <ShieldAlert className="w-8 h-8 text-rose-600 shrink-0" />
+                <div className="flex flex-col gap-1">
+                  <h3 className="font-bold text-rose-950 text-sm">Safety Boundary Tripped</h3>
+                  <p className="text-xs text-rose-900 font-mono bg-white p-3 rounded border border-rose-100 leading-relaxed">{reactionSafety}</p>
+                </div>
+              </div>
+            )}
+
+            {reactionLoading && !reactionResult && (
+              <div className="text-center py-16 text-[#0A355C] font-mono text-sm animate-pulse">
+                <Cpu className="w-8 h-8 animate-spin mx-auto mb-3" />
+                Predicting products, balancing equation, and computing molar masses…
+              </div>
+            )}
+
+            {reactionResult && (
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+                {/* LEFT: Equation, energetics, species */}
+                <div className="xl:col-span-7 flex flex-col gap-6">
+                  {/* Balanced equation hero card */}
+                  <div className={`bg-white border border-slate-200/80 shadow-xs rounded-xl p-5 border-l-4 ${reactionResult.reaction_occurs ? (reactionResult.balanced ? "border-l-emerald-500" : "border-l-amber-500") : "border-l-slate-400"}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Scale className="w-4 h-4 text-[#0A355C]" />
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-500 font-bold">Balanced Equation</span>
+                      </div>
+                      {reactionResult.reaction_occurs && (
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded uppercase tracking-wider ${reactionResult.balanced ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
+                          {reactionResult.balanced ? "✓ Mass balanced" : "⚠ Not balanced"}
+                        </span>
+                      )}
+                    </div>
+                    {reactionResult.reaction_occurs ? (
+                      <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-4 text-center">
+                        <code className="text-lg md:text-xl font-mono font-bold text-[#0A355C] break-words leading-relaxed select-all">
+                          {reactionResult.equation}
+                        </code>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-4 flex items-start gap-3">
+                        <AlertTriangle className="w-5 h-5 text-slate-400 shrink-0 mt-0.5" />
+                        <span className="text-sm text-slate-600 font-serif italic">{reactionResult.reason || "No reaction predicted between these reactants under the given conditions."}</span>
+                      </div>
+                    )}
+                    {reactionResult.reaction_occurs && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-[#0A355C]/10 text-[#0A355C] border border-[#0A355C]/25 uppercase tracking-wider flex items-center gap-1">
+                          <Beaker className="w-3 h-3" /> {reactionResult.reaction_type}
+                        </span>
+                        {reactionResult.conditions && (
+                          <span className="text-[10px] font-mono font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                            {reactionResult.conditions}
+                          </span>
+                        )}
+                        <span className="text-[9px] font-mono text-slate-400 px-2 py-1 uppercase tracking-wider ml-auto self-center">via {reactionResult.source}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Energetics */}
+                  {reactionResult.reaction_occurs && reactionResult.energetics && (
+                    <div className="bg-white border border-slate-200/80 shadow-xs rounded-xl p-5">
+                      <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-3">
+                        <Flame className={`w-4 h-4 ${reactionResult.energetics.character === "Exothermic" ? "text-orange-500" : reactionResult.energetics.character === "Endothermic" ? "text-sky-500" : "text-slate-400"}`} />
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-500 font-bold">Energetics</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wider block">Thermal character</span>
+                          <span className={`text-lg font-bold ${reactionResult.energetics.character === "Exothermic" ? "text-orange-600" : reactionResult.energetics.character === "Endothermic" ? "text-sky-600" : "text-slate-600"}`}>
+                            {reactionResult.energetics.character}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wider block">Est. ΔH (heuristic)</span>
+                          <span className="text-lg font-bold text-slate-800 font-mono">{reactionResult.energetics.estimatedDeltaH} kJ/mol</span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-2 leading-relaxed italic">{reactionResult.energetics.note}</p>
+                    </div>
+                  )}
+
+                  {/* Species & molar masses */}
+                  {reactionResult.species && reactionResult.species.length > 0 && (
+                    <div className="bg-white border border-slate-200/80 shadow-xs rounded-xl overflow-hidden">
+                      <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                        <Atom className="w-4 h-4 text-[#0A355C]" />
+                        <span className="text-xs font-bold uppercase tracking-widest text-slate-800">Species & Molar Masses</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-[9px] font-mono uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                              <th className="text-left p-3">Coeff</th>
+                              <th className="text-left p-3">Formula</th>
+                              <th className="text-left p-3">Role</th>
+                              <th className="text-left p-3">State</th>
+                              <th className="text-right p-3">Molar Mass</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reactionResult.species.map((s: any, idx: number) => (
+                              <tr key={idx} className="border-b border-slate-50 last:border-b-0 font-mono">
+                                <td className="p-3 text-slate-500">{s.coefficient}</td>
+                                <td className="p-3 font-bold text-[#0A355C]">{s.formula}</td>
+                                <td className="p-3">
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase tracking-wider ${s.role === "reactant" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>
+                                    {s.role}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-slate-500 italic">{s.state ? `(${s.state})` : "—"}</td>
+                                <td className="p-3 text-right text-slate-800 font-bold">{s.molarMass !== null ? `${s.molarMass.toFixed(2)} g/mol` : "n/a"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* RIGHT: Full analysis report */}
+                <div className="xl:col-span-5">
+                  <div className="bg-white border border-slate-200/80 shadow-xs rounded-xl overflow-hidden sticky top-4">
+                    <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-[#0A355C]" />
+                      <span className="text-xs font-bold uppercase tracking-widest text-slate-800">Reaction Analysis Report</span>
+                    </div>
+                    <div className="p-5 max-h-[70vh] overflow-y-auto">
+                      <ScientificMarkdownRenderer text={reactionResult.report} />
+                    </div>
+                    {reactionResult.reaction_occurs && (
+                      <div className="p-4 border-t border-slate-100 bg-slate-50">
+                        <button
+                          onClick={() => {
+                            const newExp: Experiment = {
+                              id: `exp-${Date.now()}`,
+                              smiles: "",
+                              name: reactionResult.equation,
+                              assay: `${reactionResult.reaction_type} reaction`,
+                              resultValue: `${reactionResult.energetics?.character || ""} · ${reactionResult.balanced ? "balanced" : "unbalanced"}`,
+                              outcome: "success",
+                              notes: `${reactionResult.observations || ""} ${reactionResult.conditions ? "Conditions: " + reactionResult.conditions : ""}`.trim(),
+                              createdAt: new Date().toISOString(),
+                            };
+                            setExperiments((prev) => [newExp, ...prev]);
+                            setViewMode("experiments");
+                          }}
+                          className="w-full bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded font-mono text-[10px] font-bold px-3 py-2 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3" /> Log to Lab Ledger
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
