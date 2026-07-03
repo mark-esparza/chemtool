@@ -125,19 +125,39 @@ function getParetoFrontMask(costs: number[][]): boolean[] {
   return isOptimal;
 }
 
-const PUBCHEM_PROPS = "CID,CanonicalSMILES,IsomericSMILES,MolecularFormula,MolecularWeight,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount";
+// Current PubChem PUG-REST property names. (PubChem renamed the SMILES fields in
+// 2025: CanonicalSMILES -> ConnectivitySMILES, IsomericSMILES -> SMILES. Requesting
+// a retired name makes PUG-REST reject the whole request with HTTP 400.)
+const PUBCHEM_PROPS = "MolecularFormula,MolecularWeight,IUPACName,SMILES,ConnectivitySMILES,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount";
 
-/** Fetch the property record for a compound by name / smiles / cid. Returns null on a clean miss (404); throws on transport failure. */
-async function pubchemProperties(kind: "name" | "smiles" | "cid", value: string) {
-  const url = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/${kind}/${encodeURIComponent(value)}/property/${PUBCHEM_PROPS}/JSON`;
+/**
+ * Resolve a query to a PubChem CID via the /cids endpoint. This carries no
+ * property names, so compound existence is decided independently of the property
+ * schema. 404/400 = no such compound / unparseable query (null); other non-OK
+ * statuses are reachability problems (throw).
+ */
+async function pubchemResolveCid(kind: "name" | "smiles", value: string): Promise<number | null> {
+  const url = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/${kind}/${encodeURIComponent(value)}/cids/JSON`;
   const r = await fetch(url);
-  // 404/400 are genuine "no such compound / bad query" answers from PubChem.
   if (r.status === 404 || r.status === 400) return null;
-  // Anything else non-OK (403/407 egress policy, 429 rate limit, 5xx) is a
-  // reachability problem — surface it so the caller can report the outage.
   if (!r.ok) throw new Error(`PubChem returned HTTP ${r.status}`);
   const data: any = await r.json();
-  return data?.PropertyTable?.Properties?.[0] || null;
+  const cid = data?.IdentifierList?.CID?.[0];
+  return typeof cid === "number" ? cid : null;
+}
+
+/** Fetch a compound's properties by CID. Non-fatal: returns {} on any problem so a
+ * property hiccup never turns a real compound into a "not found". */
+async function pubchemPropertiesByCid(cid: number): Promise<any> {
+  try {
+    const url = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/${PUBCHEM_PROPS}/JSON`;
+    const r = await fetch(url);
+    if (!r.ok) return {};
+    const data: any = await r.json();
+    return data?.PropertyTable?.Properties?.[0] || {};
+  } catch {
+    return {};
+  }
 }
 
 /** Ask PubChem's autocomplete for the closest real compound name to a fuzzy/misspelled query. */
@@ -170,35 +190,40 @@ async function fetchPubChemData(q: string) {
     // so chemical names with parentheses (e.g. "iron(III) chloride") still search by name.
     const looksSmiles = !hasSpace && !isCid && /[=#\[\]]/.test(trimmed) && /[A-Za-z]/.test(trimmed);
 
-    let properties: any = null;
+    let cid: number | null = null;
     let resolvedQuery = trimmed;
 
     if (isCid) {
-      properties = await pubchemProperties("cid", trimmed);
+      cid = Number(trimmed);
     } else if (looksSmiles) {
-      properties = await pubchemProperties("smiles", trimmed);
+      cid = await pubchemResolveCid("smiles", trimmed);
     } else {
-      properties = await pubchemProperties("name", trimmed);
-      if (!properties) {
+      cid = await pubchemResolveCid("name", trimmed);
+      if (!cid) {
         // Fuzzy resolve: correct spelling / partial name to the nearest real compound and retry.
         const suggestion = await pubchemSuggestName(trimmed);
         if (suggestion && suggestion.toLowerCase() !== trimmed.toLowerCase()) {
-          const retry = await pubchemProperties("name", suggestion);
-          if (retry) {
-            properties = retry;
+          const retryCid = await pubchemResolveCid("name", suggestion);
+          if (retryCid) {
+            cid = retryCid;
             resolvedQuery = suggestion;
           }
         }
       }
     }
 
-    // Reaching this point means PubChem responded. A null here is a genuine "no such compound".
-    if (!properties) {
+    // Reaching this point means PubChem responded. No CID is a genuine "no such compound".
+    if (!cid) {
       console.warn(`PubChem has no compound matching "${trimmed}".`);
       return null;
     }
 
-    const cid = properties.CID;
+    const properties = await pubchemPropertiesByCid(cid);
+    // A user-typed CID that doesn't resolve to a real compound yields no properties.
+    if (isCid && !properties.MolecularFormula && !properties.SMILES && !properties.ConnectivitySMILES) {
+      console.warn(`PubChem CID ${trimmed} did not resolve to a compound.`);
+      return null;
+    }
 
     // Fetch Description
     let description = "No description available in PubChem.";
@@ -239,7 +264,7 @@ async function fetchPubChemData(q: string) {
       cid,
       name: commonName,
       iupac_name: properties.IUPACName || resolvedQuery,
-      smiles: properties.IsomericSMILES || properties.CanonicalSMILES,
+      smiles: properties.SMILES || properties.ConnectivitySMILES || "",
       formula: properties.MolecularFormula,
       mw: properties.MolecularWeight,
       clogp: properties.XLogP !== undefined ? properties.XLogP : null,
