@@ -6,6 +6,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { createServer as createViteServer } from "vite";
 import { calculateProperties, calculateTanimotoDistance, MolecularProperties } from "./src/lib/chemEngine.js";
 import {
@@ -23,6 +24,19 @@ import {
 
 // Load environment variables
 dotenv.config();
+
+// Route native fetch() through an HTTP(S) proxy when one is configured, so live
+// PubChem lookups work in proxied / corporate-egress environments too. This is a
+// no-op when no proxy is set (direct outbound access).
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+if (proxyUrl) {
+  try {
+    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+    console.log(`[Network] Outbound requests routed through proxy: ${proxyUrl}`);
+  } catch (e) {
+    console.warn("[Network] Could not configure proxy dispatcher:", e instanceof Error ? e.message : e);
+  }
+}
 
 // Dangerous chemical keywords for Fail-Closed Input Safety
 const DANGEROUS_TERMS = [
