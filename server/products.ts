@@ -117,29 +117,97 @@ async function searchSource(base: string, q: string): Promise<OpenFactsProduct[]
   return Array.isArray(data?.products) ? data.products : [];
 }
 
+/** One Open Facts source resolver. */
+async function resolveOpenFacts(src: (typeof SOURCES)[number], q: string): Promise<ProductBreakdown | null> {
+  const products = await searchSource(src.base, q);
+  const withIngredients = products.find(
+    (p) => (Array.isArray(p.ingredients) && p.ingredients.length > 0) || (p.ingredients_text && p.ingredients_text.trim().length > 0)
+  );
+  if (withIngredients) {
+    const normalized = normalize(withIngredients, src);
+    if (normalized.ingredients.length > 0) return normalized;
+  }
+  return null;
+}
+
+/** Split a drug-label ingredient string, stripping dosages and parentheticals. */
+function parseDrugIngredients(text: string): ProductIngredient[] {
+  if (!text) return [];
+  return text
+    .replace(/\([^)]*\)/g, " ")
+    .split(/[,;]|\band\b/i)
+    .map((s) =>
+      s
+        .replace(/\b\d+(\.\d+)?\s*(mg|mcg|g|ml|iu|%|units?)\b/gi, "")
+        .replace(/[.*]/g, " ")
+    )
+    .map((s) => cleanName(s))
+    .filter((s) => s.length > 1 && s.length < 60 && !/^\d+$/.test(s))
+    .map((name) => ({ name }));
+}
+
 /**
- * Search across the Open Facts databases for a product with a usable ingredient
- * list. Returns null when nothing with ingredients is found; throws when the
- * databases cannot be reached at all.
+ * Drug-product resolver via the openFDA drug-label API (the structured data
+ * behind NIH DailyMed). Returns active + inactive ingredients for medicines.
+ */
+async function resolveDrugLabel(q: string): Promise<ProductBreakdown | null> {
+  const tryField = async (field: string) => {
+    const url = `https://api.fda.gov/drug/label.json?search=${field}:"${encodeURIComponent(q)}"&limit=1`;
+    const r = await fetch(url);
+    if (r.status === 404) return null; // openFDA returns 404 when nothing matches
+    if (!r.ok) throw new Error(`openFDA HTTP ${r.status}`);
+    const data: any = await r.json();
+    return data?.results?.[0] || null;
+  };
+
+  const res = (await tryField("openfda.brand_name")) || (await tryField("openfda.generic_name"));
+  if (!res) return null;
+
+  const active = parseDrugIngredients((res.active_ingredient || []).join(", "));
+  const inactive = parseDrugIngredients((res.inactive_ingredient || []).join(", "));
+  const ingredients = dedupe([...active, ...inactive]);
+  if (ingredients.length === 0) return null;
+
+  const name = res.openfda?.brand_name?.[0] || res.openfda?.generic_name?.[0] || q;
+  return {
+    product: {
+      name,
+      brand: res.openfda?.manufacturer_name?.[0] || "",
+      image: "",
+      source: "openFDA (drug label)",
+      category: "Medicine",
+      code: res.openfda?.spl_set_id?.[0] || "",
+      url: res.openfda?.spl_set_id?.[0]
+        ? `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${res.openfda.spl_set_id[0]}`
+        : "https://open.fda.gov/apis/drug/label/",
+    },
+    ingredients,
+  };
+}
+
+/**
+ * Search for a product with a usable ingredient list across the Open Facts
+ * databases (food, beauty, general products) and the openFDA drug labels.
+ * Returns null when nothing with ingredients is found; throws when every source
+ * is unreachable.
  */
 export async function fetchProductBreakdown(q: string): Promise<ProductBreakdown | null> {
   const trimmed = q.trim();
   if (!trimmed) return null;
 
+  const resolvers: Array<() => Promise<ProductBreakdown | null>> = [
+    ...SOURCES.map((src) => () => resolveOpenFacts(src, trimmed)),
+    () => resolveDrugLabel(trimmed),
+  ];
+
   let reached = false;
   let lastError: unknown = null;
 
-  for (const src of SOURCES) {
+  for (const resolve of resolvers) {
     try {
-      const products = await searchSource(src.base, trimmed);
+      const result = await resolve();
       reached = true;
-      const withIngredients = products.find(
-        (p) => (Array.isArray(p.ingredients) && p.ingredients.length > 0) || (p.ingredients_text && p.ingredients_text.trim().length > 0)
-      );
-      if (withIngredients) {
-        const normalized = normalize(withIngredients, src);
-        if (normalized.ingredients.length > 0) return normalized;
-      }
+      if (result) return result;
     } catch (e) {
       lastError = e;
     }
@@ -147,7 +215,7 @@ export async function fetchProductBreakdown(q: string): Promise<ProductBreakdown
 
   if (!reached) {
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    throw new Error(`The product databases are currently unreachable (${msg}). Check network access to openfoodfacts.org and try again.`);
+    throw new Error(`The product databases are currently unreachable (${msg}). Check network access to openfoodfacts.org / api.fda.gov and try again.`);
   }
   return null; // reached the databases, but no matching product with ingredients
 }
