@@ -8,11 +8,12 @@
  */
 
 import React from "react";
-import { Atom, FlaskConical, Search, PackageSearch, GitCompare, Sparkles, NotebookPen, LucideIcon } from "lucide-react";
+import { Atom, FlaskConical, Search, PackageSearch, Dna, GitCompare, Sparkles, NotebookPen, LucideIcon } from "lucide-react";
 
 import ReactionSimulator from "./features/reactions/ReactionSimulator";
 import CompoundSearch from "./features/pubchem/CompoundSearch";
 import ProductBreakdown from "./features/products/ProductBreakdown";
+import MetaboliteExplorer from "./features/metabolites/MetaboliteExplorer";
 import BatchCompare from "./features/pubchem/BatchCompare";
 import MoleculeDesigner from "./features/design/MoleculeDesigner";
 import LabNotebook from "./features/experiments/LabNotebook";
@@ -32,6 +33,7 @@ const GROUPS: { heading: string; items: NavItem[] }[] = [
       { id: "reactions", label: "Reactions", icon: FlaskConical, component: ReactionSimulator },
       { id: "search", label: "Compound Search", icon: Search, component: CompoundSearch },
       { id: "products", label: "Product Breakdown", icon: PackageSearch, component: ProductBreakdown },
+      { id: "metabolites", label: "Metabolites", icon: Dna, component: MetaboliteExplorer },
       { id: "compare", label: "Compare", icon: GitCompare, component: BatchCompare },
     ],
   },

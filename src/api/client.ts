@@ -15,6 +15,7 @@ import type {
   Candidate,
   Experiment,
   ProductBreakdown,
+  HmdbMetabolite,
 } from "../types";
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -53,6 +54,13 @@ export async function searchProduct(query: string): Promise<ProductBreakdown> {
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error || "Product search failed.");
   return data as ProductBreakdown;
+}
+
+export async function searchMetabolite(query: string): Promise<HmdbMetabolite> {
+  const res = await fetch(`/api/hmdb/search?q=${encodeURIComponent(query)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "Metabolite search failed.");
+  return data as HmdbMetabolite;
 }
 
 export function evaluateSmiles(smiles: string): Promise<MolecularProperties> {

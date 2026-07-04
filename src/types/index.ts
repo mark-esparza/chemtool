@@ -129,6 +129,35 @@ export interface ProductBreakdown {
   ingredients: ProductIngredient[];
 }
 
+// ---------------------------------------------------------------------------
+// HMDB metabolite (as returned by /api/hmdb/search)
+// ---------------------------------------------------------------------------
+export interface HmdbConcentration {
+  biospecimen: string;
+  value: string;
+  units: string;
+  condition?: string;
+}
+
+export interface HmdbMetabolite {
+  accession: string;
+  name: string;
+  formula: string | null;
+  averageMass: number | null;
+  iupacName: string | null;
+  smiles: string | null;
+  inchikey: string | null;
+  state: string | null;
+  description: string | null;
+  biospecimens: string[];
+  tissues: string[];
+  pathways: string[];
+  diseases: string[];
+  concentrations: HmdbConcentration[];
+  url: string;
+  structureImage: string;
+}
+
 export interface ReactionResult {
   reaction_occurs: boolean;
   reactants: string[];
