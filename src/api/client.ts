@@ -14,6 +14,7 @@ import type {
   DesignBrief,
   Candidate,
   Experiment,
+  ProductBreakdown,
 } from "../types";
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -45,6 +46,13 @@ export async function searchCompound(query: string): Promise<PubChemCompound> {
 
 export function batchLookup(queries: string[]): Promise<{ results: BatchResult[] }> {
   return postJson<{ results: BatchResult[] }>("/api/pubchem/batch", { queries });
+}
+
+export async function searchProduct(query: string): Promise<ProductBreakdown> {
+  const res = await fetch(`/api/product/search?q=${encodeURIComponent(query)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "Product search failed.");
+  return data as ProductBreakdown;
 }
 
 export function evaluateSmiles(smiles: string): Promise<MolecularProperties> {

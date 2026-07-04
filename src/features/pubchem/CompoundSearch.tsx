@@ -7,6 +7,7 @@ import React, { useEffect, useState } from "react";
 import { Search, ExternalLink } from "lucide-react";
 import { Panel, Button, TextInput, Badge, Chip, Spinner, ErrorNote, StatTile, EmptyState } from "../../components/ui";
 import { searchCompound } from "../../api/client";
+import { takePendingCompound } from "../../store/handoff";
 import type { PubChemCompound } from "../../types";
 
 const EXAMPLES = ["Aspirin", "Caffeine", "Glucose", "Ethanol", "Meloxicam", "Benzene"];
@@ -32,7 +33,14 @@ export default function CompoundSearch() {
   };
 
   useEffect(() => {
-    run();
+    // If a compound was sent over from the bank, look it up.
+    const pending = takePendingCompound();
+    if (pending) {
+      setQuery(pending);
+      run(pending);
+    } else {
+      run();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -16,6 +16,7 @@ import designRoute from "./routes/design.js";
 import pubchemRoute from "./routes/pubchem.js";
 import evaluateRoute from "./routes/evaluate.js";
 import reactionRoute from "./routes/reaction.js";
+import productRoute from "./routes/products.js";
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ app.use(express.json());
 // Feature API routes.
 app.use(reactionRoute);
 app.use(pubchemRoute);
+app.use(productRoute);
 app.use(designRoute);
 app.use(evaluateRoute);
 

@@ -3,19 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * App shell: brand, student-first navigation, and feature routing. All feature
- * logic lives under src/features/*.
+ * logic lives under src/features/*. Navigation is a shared store so features can
+ * hand off to one another (e.g. the chemical bank → the Reaction Simulator).
  */
 
-import React, { useState } from "react";
-import { Atom, FlaskConical, Search, GitCompare, Sparkles, NotebookPen, LucideIcon } from "lucide-react";
+import React from "react";
+import { Atom, FlaskConical, Search, PackageSearch, GitCompare, Sparkles, NotebookPen, LucideIcon } from "lucide-react";
 
 import ReactionSimulator from "./features/reactions/ReactionSimulator";
 import CompoundSearch from "./features/pubchem/CompoundSearch";
+import ProductBreakdown from "./features/products/ProductBreakdown";
 import BatchCompare from "./features/pubchem/BatchCompare";
 import MoleculeDesigner from "./features/design/MoleculeDesigner";
 import LabNotebook from "./features/experiments/LabNotebook";
-
-type ViewId = "reactions" | "search" | "compare" | "designer" | "notebook";
+import { useView, navigate, ViewId } from "./store/nav";
 
 interface NavItem {
   id: ViewId;
@@ -30,6 +31,7 @@ const GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { id: "reactions", label: "Reactions", icon: FlaskConical, component: ReactionSimulator },
       { id: "search", label: "Compound Search", icon: Search, component: CompoundSearch },
+      { id: "products", label: "Product Breakdown", icon: PackageSearch, component: ProductBreakdown },
       { id: "compare", label: "Compare", icon: GitCompare, component: BatchCompare },
     ],
   },
@@ -45,7 +47,7 @@ const GROUPS: { heading: string; items: NavItem[] }[] = [
 const ALL = GROUPS.flatMap((g) => g.items);
 
 export default function App() {
-  const [view, setView] = useState<ViewId>("reactions");
+  const view = useView();
   const Active = ALL.find((i) => i.id === view)!.component;
 
   return (
@@ -73,7 +75,7 @@ export default function App() {
                   return (
                     <button
                       key={item.id}
-                      onClick={() => setView(item.id)}
+                      onClick={() => navigate(item.id)}
                       className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
                         active ? "bg-[#0A355C] text-white" : "text-slate-600 hover:bg-slate-100"
                       }`}
@@ -103,7 +105,7 @@ export default function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setView(item.id)}
+                onClick={() => navigate(item.id)}
                 className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ${active ? "bg-[#0A355C] text-white" : "text-slate-600"}`}
               >
                 <Icon className="h-4 w-4" />
