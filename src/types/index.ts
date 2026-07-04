@@ -108,6 +108,27 @@ export interface ReactionEnergetics {
   note: string;
 }
 
+// ---------------------------------------------------------------------------
+// Product ingredient breakdown (as returned by /api/product/search)
+// ---------------------------------------------------------------------------
+export interface ProductIngredient {
+  name: string;
+  percent?: number;
+}
+
+export interface ProductBreakdown {
+  product: {
+    name: string;
+    brand: string;
+    image: string;
+    source: string;
+    category: string;
+    code: string;
+    url: string;
+  };
+  ingredients: ProductIngredient[];
+}
+
 export interface ReactionResult {
   reaction_occurs: boolean;
   reactants: string[];

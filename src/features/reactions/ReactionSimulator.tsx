@@ -8,6 +8,7 @@ import { FlaskConical, Zap, Scale, Flame, Atom, ShieldAlert, AlertTriangle, File
 import { Panel, Button, Field, TextInput, Badge, Chip, Spinner, ErrorNote } from "../../components/ui";
 import { Markdown } from "../../components/ui/Markdown";
 import { simulateReaction } from "../../api/client";
+import { takePendingReactants } from "../../store/handoff";
 import type { ReactionResult } from "../../types";
 
 const PRESETS = [
@@ -45,7 +46,15 @@ export default function ReactionSimulator() {
   };
 
   useEffect(() => {
-    run();
+    // If chemicals were sent over from the bank, prefill and run them.
+    const pending = takePendingReactants();
+    if (pending && pending.length > 0) {
+      const rx = pending.join(" + ");
+      setInput(rx);
+      run(rx, "");
+    } else {
+      run();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
