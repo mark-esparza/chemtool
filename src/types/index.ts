@@ -162,7 +162,7 @@ export interface ResolvedReactant {
   input: string;
   formula: string | null;
   name?: string;
-  source: "formula" | "alias" | "pubchem" | "unresolved";
+  source: "smiles" | "formula" | "alias" | "pubchem" | "unresolved";
 }
 
 export interface ReactionResult {

@@ -68,7 +68,7 @@ export default function ReactionSimulator() {
           <FlaskConical className="h-5 w-5 text-[#0A355C]" /> Reaction Simulator
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Enter reactants by <span className="font-medium text-slate-600">name or formula</span> — we predict the products, balance the equation, and explain what happens.
+          Enter reactants by <span className="font-medium text-slate-600">name, formula, or SMILES</span> — we predict the products, balance the equation, and explain what happens.
         </p>
       </div>
 
@@ -80,7 +80,7 @@ export default function ReactionSimulator() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && run()}
-                placeholder="e.g. methane + oxygen   or   HCl + NaOH   or   vinegar + baking soda"
+                placeholder="e.g. methane + oxygen · HCl + NaOH · vinegar + baking soda · CC(=O)O + NaHCO3"
                 className="font-mono"
               />
             </Field>
@@ -139,7 +139,7 @@ export default function ReactionSimulator() {
               }
             >
               {(() => {
-                const named = (result.resolved_reactants || []).filter((r) => r.source === "alias" || r.source === "pubchem");
+                const named = (result.resolved_reactants || []).filter((r) => r.source === "alias" || r.source === "pubchem" || r.source === "smiles");
                 if (named.length === 0) return null;
                 return (
                   <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">

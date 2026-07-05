@@ -88,6 +88,7 @@ export function parseSmiles(smiles: string): ChemGraph {
   
   let i = 0;
   let lastAtomId: number | null = null;
+  let pendingBondOrder = 1; // set by '='/'#', consumed by the next atom's bond
   const len = smiles.length;
 
   while (i < len) {
@@ -112,14 +113,13 @@ export function parseSmiles(smiles: string): ChemGraph {
       continue;
     }
 
-    // Explicit bonds
-    let currentBondOrder = 1;
+    // Explicit bonds — persist across loop iterations until the next atom consumes them.
     if (char === "=") {
-      currentBondOrder = 2;
+      pendingBondOrder = 2;
       i++;
       continue;
     } else if (char === "#") {
-      currentBondOrder = 3;
+      pendingBondOrder = 3;
       i++;
       continue;
     } else if (char === "/") {
@@ -133,6 +133,7 @@ export function parseSmiles(smiles: string): ChemGraph {
     } else if (char === ".") {
       // Unbonded fragments, dissociate lastAtomId
       lastAtomId = null;
+      pendingBondOrder = 1;
       i++;
       continue;
     }
@@ -190,13 +191,14 @@ export function parseSmiles(smiles: string): ChemGraph {
 
     // If we have a preceding atom, bond to it
     if (lastAtomId !== null) {
-      const order = isAromatic && atoms[lastAtomId].isAromatic ? 1.5 : currentBondOrder;
+      const order = isAromatic && atoms[lastAtomId].isAromatic ? 1.5 : pendingBondOrder;
       bonds.push({
         atom1: lastAtomId,
         atom2: newAtom.id,
         order,
       });
     }
+    pendingBondOrder = 1; // consumed by this atom
 
     lastAtomId = newAtom.id;
 
@@ -581,6 +583,29 @@ export function calculateProperties(smiles: string): MolecularProperties {
 
 function sumB(arr: boolean[]): number {
   return arr.reduce((acc, current) => acc + (current ? 1 : 0), 0);
+}
+
+/**
+ * Molecular formula (Hill system, with implicit hydrogens) for a SMILES string.
+ * Throws if the SMILES yields no atoms — lets callers distinguish real structures.
+ */
+export function smilesToFormula(smiles: string): string {
+  const { atoms } = parseSmiles(smiles);
+  if (atoms.length === 0) throw new Error("No atoms parsed from SMILES");
+  const counts: Record<string, number> = { H: 0 };
+  for (const a of atoms) {
+    counts[a.symbol] = (counts[a.symbol] ?? 0) + 1;
+    counts.H += a.implicitHydrogens;
+  }
+  const elements = Object.keys(counts).filter((k) => counts[k] > 0);
+  elements.sort((a, b) => {
+    if (a === "C") return -1;
+    if (b === "C") return 1;
+    if (a === "H") return -1;
+    if (b === "H") return 1;
+    return a.localeCompare(b);
+  });
+  return elements.map((el) => (counts[el] === 1 ? el : `${el}${counts[el]}`)).join("");
 }
 
 /**
