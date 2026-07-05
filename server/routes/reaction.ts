@@ -20,6 +20,7 @@ import {
   ReactionType,
 } from "../../src/lib/reactionEngine.js";
 import { isInputSafe } from "../safety.js";
+import { resolveReactants } from "../reactants.js";
 
 const router = Router();
 
@@ -98,20 +99,24 @@ router.post("/api/reaction/simulate", async (req, res) => {
     reactants = reactants.map((r) => String(r).trim()).filter(Boolean).slice(0, 6);
     const conditionStr = (conditions || "").toString().trim();
 
-    // Safety layer — reuse the fail-closed dual-use scanner.
+    // Safety layer — scan the raw input (names included) before resolving.
     const safetyRes = isInputSafe(reactants.join(" ") + " " + conditionStr);
     if (!safetyRes.safe) {
       return res.status(403).json({ safety_tripped: true, error: safetyRes.reason });
     }
 
-    // Validate every reactant is a parseable formula of real elements.
-    for (const r of reactants) {
-      try {
-        parseFormula(r);
-      } catch (e: any) {
-        return res.status(400).json({ error: `Invalid reactant formula "${r}": ${e?.message || "parse error"}. Use formulas like H2O, NaCl, C2H5OH.` });
-      }
+    // Resolve reactants that are chemical NAMES (e.g. "table salt", "glucose")
+    // into conventional formulas, and normalize any typed formulas. Anything
+    // that still can't be identified is reported back.
+    const resolved = await resolveReactants(reactants);
+    const unresolved = resolved.filter((r) => !r.formula);
+    if (unresolved.length > 0) {
+      return res.status(400).json({
+        error: `Couldn't identify ${unresolved.map((u) => `"${u.input}"`).join(", ")}. Enter a chemical name (e.g. "table salt", "glucose") or a formula (e.g. NaCl, C6H12O6).`,
+        unresolved: unresolved.map((u) => u.input),
+      });
     }
+    reactants = resolved.map((r) => r.formula!);
 
     // Predict products: curated knowledge base first, then the deterministic engine.
     let products: string[] = [];
@@ -212,6 +217,7 @@ router.post("/api/reaction/simulate", async (req, res) => {
     return res.json({
       reaction_occurs: reactionOccurs,
       reactants,
+      resolved_reactants: resolved,
       products,
       balanced,
       balance_reason: balanceReason,

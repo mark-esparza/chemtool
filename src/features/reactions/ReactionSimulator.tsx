@@ -68,7 +68,7 @@ export default function ReactionSimulator() {
           <FlaskConical className="h-5 w-5 text-[#0A355C]" /> Reaction Simulator
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Enter reactants and we predict the products, balance the equation, and explain what happens — for any element.
+          Enter reactants by <span className="font-medium text-slate-600">name or formula</span> — we predict the products, balance the equation, and explain what happens.
         </p>
       </div>
 
@@ -80,7 +80,7 @@ export default function ReactionSimulator() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && run()}
-                placeholder="e.g. CH4 + O2   or   Al, Fe2O3"
+                placeholder="e.g. methane + oxygen   or   HCl + NaOH   or   vinegar + baking soda"
                 className="font-mono"
               />
             </Field>
@@ -138,6 +138,20 @@ export default function ReactionSimulator() {
                 ) : undefined
               }
             >
+              {(() => {
+                const named = (result.resolved_reactants || []).filter((r) => r.source === "alias" || r.source === "pubchem");
+                if (named.length === 0) return null;
+                return (
+                  <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                    Read as: {named.map((r, i) => (
+                      <span key={i}>
+                        {i > 0 && ", "}
+                        <span className="text-slate-600">{r.input}</span> → <span className="font-mono font-medium text-[#0A355C]">{r.formula}</span>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
               {result.reaction_occurs ? (
                 <>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-center">

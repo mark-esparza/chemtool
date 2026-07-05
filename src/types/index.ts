@@ -158,9 +158,17 @@ export interface HmdbMetabolite {
   structureImage: string;
 }
 
+export interface ResolvedReactant {
+  input: string;
+  formula: string | null;
+  name?: string;
+  source: "formula" | "alias" | "pubchem" | "unresolved";
+}
+
 export interface ReactionResult {
   reaction_occurs: boolean;
   reactants: string[];
+  resolved_reactants?: ResolvedReactant[];
   products: string[];
   balanced: boolean;
   balance_reason?: string;
