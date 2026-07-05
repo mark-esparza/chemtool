@@ -17,6 +17,7 @@ import pubchemRoute from "./routes/pubchem.js";
 import evaluateRoute from "./routes/evaluate.js";
 import reactionRoute from "./routes/reaction.js";
 import productRoute from "./routes/products.js";
+import hmdbRoute from "./routes/hmdb.js";
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ app.use(express.json());
 app.use(reactionRoute);
 app.use(pubchemRoute);
 app.use(productRoute);
+app.use(hmdbRoute);
 app.use(designRoute);
 app.use(evaluateRoute);
 
