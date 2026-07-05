@@ -1064,7 +1064,10 @@ export function predictProducts(reactants: string[], conditions = ""): Predictio
         "Hydrogen peroxide decomposes into water and oxygen gas.",
         conditions || "Catalyst (MnO2)", reactants);
     }
-    return noReaction("Single stable reactant with no known decomposition pathway. Provide products or add a second reactant.");
+    const only = species[0].formula;
+    return noReaction(
+      `${only} is stable on its own — it won't react or decompose by itself. Add a second reactant (for example an acid, a base, a metal, water, or O₂ to burn it) to see a reaction.`
+    );
   }
 
   // ---- Combustion of a C/H(/O) compound in O2 ----

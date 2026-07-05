@@ -152,6 +152,12 @@ export default function ReactionSimulator() {
                   </div>
                 );
               })()}
+              {result.assumed_combustion && (
+                <div className="mb-3 flex items-center gap-1.5 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  <Flame className="h-3.5 w-3.5 shrink-0" />
+                  A single fuel was entered, so we assumed <span className="font-medium">combustion in air</span> and added O₂.
+                </div>
+              )}
               {result.reaction_occurs ? (
                 <>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-center">
