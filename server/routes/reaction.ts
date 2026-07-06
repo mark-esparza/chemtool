@@ -24,6 +24,17 @@ import { resolveReactants } from "../reactants.js";
 
 const router = Router();
 
+/** A combustible fuel: contains both carbon and hydrogen and only C/H/O (a hydrocarbon or oxygenate). */
+function isCombustibleFuel(formula: string): boolean {
+  try {
+    const counts = parseFormula(formula);
+    const elements = Object.keys(counts);
+    return !!counts.C && !!counts.H && elements.every((e) => e === "C" || e === "H" || e === "O");
+  } catch {
+    return false;
+  }
+}
+
 /** Build a Markdown analysis report describing the reaction for a chemistry student. */
 function buildReactionReport(params: {
   equation: string;
@@ -117,6 +128,14 @@ router.post("/api/reaction/simulate", async (req, res) => {
       });
     }
     reactants = resolved.map((r) => r.formula!);
+
+    // A lone combustible fuel almost always means "burn it" — assume combustion
+    // in air by adding O2, unless the student explicitly asked to decompose it.
+    let assumedCombustion = false;
+    if (reactants.length === 1 && !/decompos|heat only|no oxygen|inert/i.test(conditionStr) && isCombustibleFuel(reactants[0])) {
+      reactants = [reactants[0], "O2"];
+      assumedCombustion = true;
+    }
 
     // Predict products: curated knowledge base first, then the deterministic engine.
     let products: string[] = [];
@@ -218,6 +237,7 @@ router.post("/api/reaction/simulate", async (req, res) => {
       reaction_occurs: reactionOccurs,
       reactants,
       resolved_reactants: resolved,
+      assumed_combustion: assumedCombustion,
       products,
       balanced,
       balance_reason: balanceReason,

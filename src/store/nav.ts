@@ -8,7 +8,7 @@
 
 import { useSyncExternalStore } from "react";
 
-export type ViewId = "reactions" | "search" | "products" | "metabolites" | "compare" | "designer" | "notebook";
+export type ViewId = "reactions" | "search" | "products" | "metabolites" | "compare" | "designer" | "notebook" | "guide";
 
 let current: ViewId = "reactions";
 const listeners = new Set<() => void>();

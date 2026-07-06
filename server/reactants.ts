@@ -9,6 +9,7 @@
  */
 
 import { parseFormula } from "../src/lib/reactionEngine.js";
+import { smilesToFormula } from "../src/lib/chemEngine.js";
 import { fetchPubChemData } from "./pubchem.js";
 
 // Conventional formulas the reaction engine recognizes by string (acids, common
@@ -92,7 +93,15 @@ const COMMON_NAMES: Record<string, string> = {
   sodium: "Na", potassium: "K", calcium: "Ca", silver: "Ag", gold: "Au", lead: "Pb", tin: "Sn", nickel: "Ni",
 };
 
-export type ResolveSource = "formula" | "alias" | "pubchem" | "unresolved";
+/** Heuristic: does this token look like a SMILES structure rather than a formula/name? */
+function looksLikeSmiles(s: string): boolean {
+  if (/\s/.test(s)) return false; // names have spaces
+  if (/[=#\[\]@\/\\]/.test(s)) return true; // bond / bracket-atom / chirality / cis-trans syntax
+  if (/(^|[^A-Za-z])[cnops]\d?/.test(s)) return true; // aromatic lowercase atom (benzene c1ccccc1)
+  return false;
+}
+
+export type ResolveSource = "smiles" | "formula" | "alias" | "pubchem" | "unresolved";
 
 export interface ResolvedReactant {
   input: string;
@@ -105,6 +114,15 @@ export interface ResolvedReactant {
 export async function resolveReactant(token: string): Promise<ResolvedReactant> {
   const t = token.trim();
   if (!t) return { input: token, formula: null, source: "unresolved" };
+
+  // A SMILES structure — convert to its molecular formula.
+  if (looksLikeSmiles(t)) {
+    try {
+      return { input: t, formula: canonicalize(smilesToFormula(t)), name: t, source: "smiles" };
+    } catch {
+      /* not valid SMILES — fall through */
+    }
+  }
 
   // Already a valid formula.
   try {

@@ -162,13 +162,14 @@ export interface ResolvedReactant {
   input: string;
   formula: string | null;
   name?: string;
-  source: "formula" | "alias" | "pubchem" | "unresolved";
+  source: "smiles" | "formula" | "alias" | "pubchem" | "unresolved";
 }
 
 export interface ReactionResult {
   reaction_occurs: boolean;
   reactants: string[];
   resolved_reactants?: ResolvedReactant[];
+  assumed_combustion?: boolean;
   products: string[];
   balanced: boolean;
   balance_reason?: string;

@@ -8,7 +8,7 @@
  */
 
 import React from "react";
-import { Atom, FlaskConical, Search, PackageSearch, Dna, GitCompare, Sparkles, NotebookPen, LucideIcon } from "lucide-react";
+import { Atom, FlaskConical, Search, PackageSearch, Dna, GitCompare, Sparkles, NotebookPen, Compass, LucideIcon } from "lucide-react";
 
 import ReactionSimulator from "./features/reactions/ReactionSimulator";
 import CompoundSearch from "./features/pubchem/CompoundSearch";
@@ -17,6 +17,7 @@ import MetaboliteExplorer from "./features/metabolites/MetaboliteExplorer";
 import BatchCompare from "./features/pubchem/BatchCompare";
 import MoleculeDesigner from "./features/design/MoleculeDesigner";
 import LabNotebook from "./features/experiments/LabNotebook";
+import Methodology from "./features/guide/Methodology";
 import { useView, navigate, ViewId } from "./store/nav";
 
 interface NavItem {
@@ -42,6 +43,12 @@ const GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { id: "designer", label: "Molecule Designer", icon: Sparkles, component: MoleculeDesigner },
       { id: "notebook", label: "Lab Notebook", icon: NotebookPen, component: LabNotebook },
+    ],
+  },
+  {
+    heading: "Reference",
+    items: [
+      { id: "guide", label: "Workflow & Tools", icon: Compass, component: Methodology },
     ],
   },
 ];
