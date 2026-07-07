@@ -3,13 +3,45 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from "react";
-import { FlaskConical, Zap, Scale, Flame, Atom, ShieldAlert, AlertTriangle, FileText } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { FlaskConical, Zap, Scale, Flame, Atom, ShieldAlert, AlertTriangle, FileText, Thermometer, Gauge, Shapes, ArrowRight } from "lucide-react";
 import { Panel, Button, Field, TextInput, Badge, Chip, Spinner, ErrorNote } from "../../components/ui";
 import { Markdown } from "../../components/ui/Markdown";
 import { simulateReaction } from "../../api/client";
 import { takePendingReactants } from "../../store/handoff";
-import type { ReactionResult } from "../../types";
+import { estimateEfficacy, Concentration } from "./efficacy";
+import type { ReactionResult, ReactionSpecies } from "../../types";
+
+/** 2D structure image for a species, resolved live from PubChem by formula/name. */
+const structureUrl = (formula: string) => `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(formula)}/PNG?image_size=180x180`;
+
+function SpeciesCard({ s }: { s: ReactionSpecies }) {
+  return (
+    <div className="flex w-24 shrink-0 flex-col items-center gap-1">
+      <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-slate-200 bg-white p-1">
+        <img src={structureUrl(s.formula)} alt={s.formula} className="max-h-full max-w-full object-contain" referrerPolicy="no-referrer" onError={(e) => (e.currentTarget.style.display = "none")} />
+      </div>
+      <div className="text-center leading-tight">
+        <div className="font-mono text-xs font-semibold text-slate-700">{s.coefficient > 1 ? <span className="text-slate-400">{s.coefficient} </span> : null}{s.formula}</div>
+        {s.state && <div className="text-[10px] italic text-slate-400">({s.state})</div>}
+      </div>
+    </div>
+  );
+}
+
+function Meter({ label, pct, sub, tone }: { label: string; pct: number; sub: string; tone: string }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-slate-500">{label}</span>
+        <span className="font-semibold text-slate-700">{sub}</span>
+      </div>
+      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
 
 const PRESETS = [
   { title: "Methane combustion", input: "CH4 + O2", conditions: "Ignition, excess O₂" },
@@ -27,6 +59,15 @@ export default function ReactionSimulator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [safety, setSafety] = useState("");
+
+  // Condition-optimization controls (what-if analysis on the predicted reaction)
+  const [tempC, setTempC] = useState(25);
+  const [concentration, setConcentration] = useState<Concentration>("normal");
+  const [catalyst, setCatalyst] = useState(false);
+  const efficacy = useMemo(
+    () => estimateEfficacy(result?.energetics?.character, { tempC, concentration, catalyst }),
+    [result, tempC, concentration, catalyst]
+  );
 
   const run = async (rx = input, cond = conditions) => {
     if (!rx.trim()) return;
@@ -177,6 +218,77 @@ export default function ReactionSimulator() {
                 </div>
               )}
             </Panel>
+
+            {/* Structure diagram */}
+            {result.reaction_occurs && result.species?.length > 0 && (
+              <Panel title="Structures — how they interact" icon={Shapes}>
+                <div className="flex flex-wrap items-center gap-3 overflow-x-auto">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {result.species.filter((s) => s.role === "reactant").map((s, i) => (
+                      <React.Fragment key={i}>
+                        {i > 0 && <span className="font-bold text-slate-300">+</span>}
+                        <SpeciesCard s={s} />
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <ArrowRight className="h-5 w-5 shrink-0 text-[#0A355C]" />
+                  <div className="flex flex-wrap items-center gap-2">
+                    {result.species.filter((s) => s.role === "product").map((s, i) => (
+                      <React.Fragment key={i}>
+                        {i > 0 && <span className="font-bold text-slate-300">+</span>}
+                        <SpeciesCard s={s} />
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">2D structures fetched live from PubChem; some ionic or complex species may not render.</p>
+              </Panel>
+            )}
+
+            {/* Optimize conditions */}
+            {result.reaction_occurs && (
+              <Panel title="Optimize conditions" icon={Gauge}>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span className="flex items-center gap-1"><Thermometer className="h-3.5 w-3.5" /> Temperature</span>
+                      <span className="font-mono font-semibold text-slate-700">{tempC} °C</span>
+                    </div>
+                    <input type="range" min={0} max={300} step={5} value={tempC} onChange={(e) => setTempC(+e.target.value)} className="mt-2 w-full accent-[#0A355C]" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Concentration</div>
+                    <div className="mt-2 flex gap-1">
+                      {(["low", "normal", "high"] as Concentration[]).map((v) => (
+                        <button key={v} onClick={() => setConcentration(v)} className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-medium capitalize transition-colors cursor-pointer ${concentration === v ? "border-[#0A355C] bg-[#0A355C]/10 text-[#0A355C]" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{v}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Catalyst</div>
+                    <button onClick={() => setCatalyst((v) => !v)} className={`mt-2 w-full rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors cursor-pointer ${catalyst ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{catalyst ? "Catalyst added" : "No catalyst"}</button>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center gap-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-center">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-400">Efficacy</div>
+                    <div className={`text-2xl font-bold ${efficacy.score >= 65 ? "text-emerald-600" : efficacy.score >= 40 ? "text-amber-600" : "text-slate-500"}`}>{efficacy.score}</div>
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <Meter label="Rate" pct={efficacy.ratePct} sub={efficacy.rateLabel} tone="bg-[#0A355C]" />
+                    <Meter label="Equilibrium" pct={efficacy.yieldPct} sub={efficacy.yieldLabel} tone="bg-emerald-500" />
+                  </div>
+                </div>
+
+                <ul className="mt-3 space-y-1">
+                  {efficacy.tips.map((t, i) => (
+                    <li key={i} className="flex gap-2 text-[13px] text-slate-600"><span className="text-[#0A355C]">→</span>{t}</li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-[11px] text-slate-400">Educational estimate from thermal character + conditions (Arrhenius / Le Chatelier intuition) — not rigorous kinetics.</p>
+              </Panel>
+            )}
 
             {/* Energetics */}
             {result.reaction_occurs && result.energetics && (
