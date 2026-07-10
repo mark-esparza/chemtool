@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { Dna, Droplets, HeartPulse, Waypoints, Plus, Check, ExternalLink, Search as SearchIcon, FlaskConical } from "lucide-react";
+import { Dna, Droplets, HeartPulse, Waypoints, Plus, Check, ExternalLink, Search as SearchIcon, FlaskConical, Network } from "lucide-react";
 import { Panel, Button, TextInput, Badge, Chip, Spinner, ErrorNote, StatTile, EmptyState } from "../../components/ui";
 import { searchMetabolite } from "../../api/client";
 import type { HmdbMetabolite } from "../../types";
@@ -13,6 +13,33 @@ import { setPendingReactants, setPendingCompound } from "../../store/handoff";
 import { navigate } from "../../store/nav";
 
 const EXAMPLES = ["Glucose", "Dopamine", "Cholesterol", "Lactic acid", "Urea", "Caffeine"];
+
+const enc = encodeURIComponent;
+/** Where to find an existing, loadable model of a pathway. */
+const modelSources = (q: string) => [
+  { name: "BioModels", desc: "Curated systems-biology models (SBML) you can load into a simulator.", url: `https://www.ebi.ac.uk/biomodels/search?query=${enc(q)}` },
+  { name: "KEGG PATHWAY", desc: "Reference metabolic pathway maps.", url: `https://www.kegg.jp/kegg-bin/search_pathway_text?map=map&keyword=${enc(q)}` },
+  { name: "Reactome", desc: "Curated human pathways and reactions.", url: `https://reactome.org/content/query?q=${enc(q)}` },
+  { name: "SMPDB", desc: "Small Molecule Pathway Database — HMDB's pathway source.", url: `https://smpdb.ca/search?query=${enc(q)}` },
+];
+/** Engines that simulate a biochemical network. */
+const ENGINES = [
+  { name: "COPASI", desc: "Simulate & analyze the network — ODE, stochastic, steady state, parameter estimation.", url: "https://copasi.org/" },
+  { name: "Tellurium", desc: "Programmable Python systems-biology environment.", url: "https://tellurium.analogmachine.org/" },
+  { name: "COBRApy", desc: "Constraint-based / flux-balance analysis at genome scale.", url: "https://opencobra.github.io/cobrapy/" },
+];
+
+function LinkTile({ name, desc, url }: { name: string; desc: string; url: string }) {
+  return (
+    <a href={url} target="_blank" rel="noreferrer noopener" className="block rounded-lg border border-slate-200 bg-white p-3 transition-colors hover:border-[#0A355C]/40 hover:bg-slate-50">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-slate-800">{name}</span>
+        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+      </div>
+      <p className="mt-1 text-[12px] leading-relaxed text-slate-500">{desc}</p>
+    </a>
+  );
+}
 
 export default function MetaboliteExplorer() {
   const [query, setQuery] = useState("Glucose");
@@ -171,10 +198,40 @@ export default function MetaboliteExplorer() {
             )}
             {result.pathways.length > 0 && (
               <Panel title="Metabolic pathways" icon={Waypoints}>
-                <div className="flex flex-wrap gap-1.5">{result.pathways.map((p) => <Badge key={p} tone="green">{p}</Badge>)}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {result.pathways.map((p) => (
+                    <a key={p} href={`https://www.ebi.ac.uk/biomodels/search?query=${enc(p)}`} target="_blank" rel="noreferrer noopener"
+                      className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
+                      {p} <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ))}
+                </div>
               </Panel>
             )}
           </div>
+
+          {/* Biochem pathway bridge — hand off to a network simulator */}
+          <Panel title="Model this pathway" icon={Network}>
+            <p className="text-sm leading-relaxed text-slate-600">
+              To go beyond a single reaction, take a pathway into a systems-biology simulator and ask network questions — what accumulates if an
+              enzyme is inhibited, which reaction is the bottleneck, or how flux shifts under aerobic vs anaerobic conditions.
+            </p>
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#0A355C]">1 · Find a model{result.pathways[0] ? ` for "${result.pathways[0]}"` : ""}</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {modelSources(result.pathways[0] || result.name).map((s) => <LinkTile key={s.name} {...s} />)}
+              </div>
+            </div>
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#0A355C]">2 · Simulate the network</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {ENGINES.map((e) => <LinkTile key={e.name} {...e} />)}
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] text-slate-400">
+              Load an SBML model into COPASI/Tellurium, or a genome-scale model into COBRApy, then vary enzyme activity and substrate levels to test hypotheses. See <button onClick={() => navigate("guide")} className="text-[#0A355C] hover:underline cursor-pointer">Workflow &amp; Tools</button> for the full method.
+            </p>
+          </Panel>
 
           {result.description && (
             <Panel title="About" icon={Dna}>
