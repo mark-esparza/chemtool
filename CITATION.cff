@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "Molecule Design Assistant (chemtool)"
+abstract: >-
+  A deterministic chemistry workbench that simulates and balances chemical
+  reactions with analysis reports, designs candidate analogs and scores
+  molecular properties, and searches compounds live on PubChem. All
+  calculations run on device with no AI API key required.
+authors:
+  - family-names: Esparza
+    given-names: Mark
+    orcid: "https://orcid.org/0009-0000-5171-102X"
+repository-code: "https://github.com/mark-esparza/chemtool"
+url: "https://mark-esparza.github.io"
+license: MIT
+version: 1.0.0
+keywords:
+  - cheminformatics
+  - molecular properties
+  - reaction balancing
+  - PubChem
+  - drug design
