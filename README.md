@@ -1,12 +1,21 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Molecule Design Assistant (chemtool)
 
-# Run and deploy your AI Studio app
+A deterministic chemistry workbench for the browser. Simulate and balance
+chemical reactions with analysis reports, design candidate analogs and score
+their molecular properties, and look up any compound live on NIH PubChem.
+Every calculation runs on device, so no AI model or API key is involved.
 
-This contains everything you need to run your app locally.
+**Author:** Mark Esparza ([ORCID 0009-0000-5171-102X](https://orcid.org/0009-0000-5171-102X)) · [mark-esparza.github.io](https://mark-esparza.github.io)
 
-View your app in AI Studio: https://ai.studio/apps/c037d949-48ad-4cd6-b44e-62f7ef18e391
+## Features
+
+- **Reactions:** predict and balance reactions, with a written analysis report
+- **Molecule Designer:** generate candidate analogs and score their properties
+- **Compound Search:** live PubChem lookups for any compound
+- **Metabolites:** look up metabolites in the Human Metabolome Database (HMDB), including where they occur in the body, normal concentrations, associated diseases, and pathways
+- **Product Breakdown:** pull a consumer product's ingredient list from the Open Food, Beauty, and Products Facts databases and resolve each ingredient to a chemical on PubChem
+- **Compare:** view compounds side by side
+- **Lab Notebook:** keep a record of experiments and results
 
 ## Run Locally
 
@@ -39,3 +48,11 @@ provides and serves the prebuilt client from `dist/` because `NODE_ENV=productio
 
 To configure a Web Service manually instead of using the blueprint, use those
 same build and start commands and set `NODE_ENV=production`.
+
+## Citation
+
+If you use this software, please cite it using the metadata in [CITATION.cff](CITATION.cff). GitHub shows a "Cite this repository" button with formatted citations.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

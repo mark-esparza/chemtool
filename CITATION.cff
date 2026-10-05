@@ -13,7 +13,7 @@ authors:
     orcid: "https://orcid.org/0009-0000-5171-102X"
 repository-code: "https://github.com/mark-esparza/chemtool"
 url: "https://mark-esparza.github.io"
-license: MIT
+license: Apache-2.0
 version: 1.0.0
 keywords:
   - cheminformatics
