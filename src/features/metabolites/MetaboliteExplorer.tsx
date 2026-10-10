@@ -10,6 +10,8 @@ import type { HmdbMetabolite } from "../../types";
 import { takePendingMetabolite } from "../../store/handoff";
 import MetaboliteRecord from "./MetaboliteRecord";
 import BankProfile from "./BankProfile";
+import BrowseIndex from "./BrowseIndex";
+import { noteViewed } from "./recent";
 
 export default function MetaboliteExplorer() {
   const [query, setQuery] = useState("");
@@ -24,7 +26,10 @@ export default function MetaboliteExplorer() {
     setError("");
     setResult(null);
     try {
-      setResult(await searchMetabolite(q.trim()));
+      const m = await searchMetabolite(q.trim());
+      setResult(m);
+      setQuery(m.name);
+      noteViewed({ accession: m.accession, name: m.name });
     } catch (e: any) {
       setError(e?.message || "Metabolite search failed.");
     } finally {
@@ -37,6 +42,7 @@ export default function MetaboliteExplorer() {
     setQuery(m.name);
     setError("");
     setResult(m);
+    noteViewed({ accession: m.accession, name: m.name });
     top.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -45,6 +51,16 @@ export default function MetaboliteExplorer() {
     if (pending) run(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const browse = (
+    <BrowseIndex
+      busy={loading}
+      onPick={(name) => {
+        setQuery(name);
+        run(name);
+      }}
+    />
+  );
 
   return (
     <div ref={top}>
@@ -76,6 +92,11 @@ export default function MetaboliteExplorer() {
         </div>
       </Box>
 
+      {/* With nothing loaded the index is the main thing to act on, so it leads.
+          Once a record is open it moves below, so the record sits directly under
+          the query box and the index is still there to pick the next one. */}
+      {!result && browse}
+
       {error && <Note kind="err" title="Retrieval failed">{error}</Note>}
       {loading && !result && <Busy label="Querying HMDB…" />}
 
@@ -83,9 +104,11 @@ export default function MetaboliteExplorer() {
 
       {!loading && !result && !error && (
         <Box>
-          <Empty title="No metabolite loaded" hint="Enter a name or HMDB accession above." />
+          <Empty title="No metabolite loaded" hint="Pick one from the index above, or type a name or HMDB accession." />
         </Box>
       )}
+
+      {result && browse}
 
       <BankProfile onOpen={open} />
     </div>
