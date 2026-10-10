@@ -21,7 +21,7 @@ const METRICS: { key: "mw" | "clogp" | "tpsa" | "hbd" | "hba" | "rotatable_bonds
 ];
 
 export default function BatchCompare() {
-  const [text, setText] = useState("Aspirin, Ibuprofen, Paracetamol, Naproxen, Celecoxib");
+  const [text, setText] = useState("");
   const [results, setResults] = useState<BatchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

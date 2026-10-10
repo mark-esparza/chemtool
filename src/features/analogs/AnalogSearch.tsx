@@ -71,7 +71,7 @@ function divergence(c: AnalogCandidate): string | null {
 }
 
 export default function AnalogSearch() {
-  const [seed, setSeed] = useState("Aspirin");
+  const [seed, setSeed] = useState("");
   const [threshold, setThreshold] = useState(90);
   const [maxRecords, setMaxRecords] = useState(25);
   const [filters, setFilters] = useState<AnalogFilters>(NO_FILTERS);
@@ -480,7 +480,7 @@ export default function AnalogSearch() {
                 value={smiles}
                 onChange={(e) => setSmiles(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && evaluate()}
-                placeholder="CC(=O)Oc1ccccc1C(=O)O"
+                placeholder="SMILES string"
                 style={{ width: "100%" }}
               />
             </Field>

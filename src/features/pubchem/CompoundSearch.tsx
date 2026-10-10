@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from "react";
-import { Box, Btn, Field, Text, Tag, Note, Busy, Empty, KeyVals, Ext, LinkBtn, val } from "../../components/ui";
+import { useEffect, useState } from "react";
+import { Box, Btn, Field, Text, Tag, Note, Busy, Empty, KeyVals, Ext, val } from "../../components/ui";
 import { searchCompound } from "../../api/client";
 import { takePendingCompound, setPendingReactants, setPendingAnalogSeed } from "../../store/handoff";
 import { navigate } from "../../store/nav";
@@ -12,10 +12,8 @@ import { useBank, addToBank } from "../bank/store";
 import { openMetabolite } from "../metabolites/actions";
 import type { PubChemCompound } from "../../types";
 
-const EXAMPLES = ["Aspirin", "Dopamine", "Glucose", "Meloxicam", "Timolol", "Levodopa"];
-
 export default function CompoundSearch() {
-  const [query, setQuery] = useState("Aspirin");
+  const [query, setQuery] = useState("");
   const [result, setResult] = useState<PubChemCompound | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -38,7 +36,7 @@ export default function CompoundSearch() {
 
   useEffect(() => {
     const pending = takePendingCompound();
-    run(pending || query);
+    if (pending) run(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -73,7 +71,7 @@ export default function CompoundSearch() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && run()}
-                placeholder="e.g. Meloxicam, C6H6, CC(=O)Oc1ccccc1C(=O)O, 2244"
+                placeholder="Name, formula, SMILES or CID"
                 style={{ width: "100%" }}
               />
             </Field>
@@ -81,22 +79,6 @@ export default function CompoundSearch() {
           <Btn primary busy={loading} onClick={() => run()} disabled={!query.trim()}>
             Search
           </Btn>
-        </div>
-        <div className="small muted">
-          Examples:{" "}
-          {EXAMPLES.map((e, i) => (
-            <React.Fragment key={e}>
-              {i > 0 && " · "}
-              <LinkBtn
-                onClick={() => {
-                  setQuery(e);
-                  run(e);
-                }}
-              >
-                {e}
-              </LinkBtn>
-            </React.Fragment>
-          ))}
         </div>
       </Box>
 

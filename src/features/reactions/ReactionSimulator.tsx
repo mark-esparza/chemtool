@@ -10,7 +10,7 @@
  * thermodynamics calculation backed them.
  */
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Btn, Field, Text, Tag, Note, Busy, Empty, KeyVals, val } from "../../components/ui";
 import { Markdown } from "../../components/ui/Markdown";
 import { simulateReaction } from "../../api/client";
@@ -18,15 +18,8 @@ import { takePendingReactants, setPendingNotebookDraft } from "../../store/hando
 import { navigate } from "../../store/nav";
 import type { ReactionResult } from "../../types";
 
-const PRESETS = [
-  { title: "Methane combustion", input: "CH4 + O2", conditions: "Ignition, excess O2" },
-  { title: "Neutralization", input: "HCl + NaOH", conditions: "" },
-  { title: "Precipitation", input: "AgNO3 + NaCl", conditions: "Aqueous" },
-  { title: "Decomposition", input: "KClO3", conditions: "Heat, MnO2 catalyst" },
-];
-
 export default function ReactionSimulator() {
-  const [input, setInput] = useState("CH4 + O2");
+  const [input, setInput] = useState("");
   const [conditions, setConditions] = useState("");
   const [result, setResult] = useState<ReactionResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -52,7 +45,7 @@ export default function ReactionSimulator() {
 
   useEffect(() => {
     const pending = takePendingReactants();
-    run(pending && pending.length > 0 ? pending.join(" + ") : input, "");
+    if (pending && pending.length > 0) run(pending.join(" + "), "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -107,24 +100,6 @@ export default function ReactionSimulator() {
           <Btn primary busy={loading} onClick={() => run()} disabled={!input.trim()}>
             Balance
           </Btn>
-        </div>
-        <div className="small muted">
-          Examples:{" "}
-          {PRESETS.map((p, i) => (
-            <React.Fragment key={p.title}>
-              {i > 0 && " · "}
-              <button
-                className="link"
-                onClick={() => {
-                  setInput(p.input);
-                  setConditions(p.conditions);
-                  run(p.input, p.conditions);
-                }}
-              >
-                {p.title}
-              </button>
-            </React.Fragment>
-          ))}
         </div>
       </Box>
 
