@@ -3,18 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from "react";
-import { Box, Btn, Field, Text, Note, Busy, Empty, LinkBtn } from "../../components/ui";
+import { useEffect, useRef, useState } from "react";
+import { Box, Btn, Field, Text, Note, Busy, Empty } from "../../components/ui";
 import { searchMetabolite } from "../../api/client";
 import type { HmdbMetabolite } from "../../types";
 import { takePendingMetabolite } from "../../store/handoff";
 import MetaboliteRecord from "./MetaboliteRecord";
 import BankProfile from "./BankProfile";
 
-const EXAMPLES = ["Glucose", "Dopamine", "Cholesterol", "Lactic acid", "Urea", "Homocysteine"];
-
 export default function MetaboliteExplorer() {
-  const [query, setQuery] = useState("Glucose");
+  const [query, setQuery] = useState("");
   const [result, setResult] = useState<HmdbMetabolite | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -44,7 +42,7 @@ export default function MetaboliteExplorer() {
 
   useEffect(() => {
     const pending = takePendingMetabolite();
-    run(pending || query);
+    if (pending) run(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -67,7 +65,7 @@ export default function MetaboliteExplorer() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && run()}
-                placeholder="e.g. dopamine, HMDB0000122"
+                placeholder="Common name or HMDB accession"
                 style={{ width: "100%" }}
               />
             </Field>
@@ -75,22 +73,6 @@ export default function MetaboliteExplorer() {
           <Btn primary busy={loading} onClick={() => run()} disabled={!query.trim()}>
             Retrieve
           </Btn>
-        </div>
-        <div className="small muted">
-          Examples:{" "}
-          {EXAMPLES.map((e, i) => (
-            <React.Fragment key={e}>
-              {i > 0 && " · "}
-              <LinkBtn
-                onClick={() => {
-                  setQuery(e);
-                  run(e);
-                }}
-              >
-                {e}
-              </LinkBtn>
-            </React.Fragment>
-          ))}
         </div>
       </Box>
 
