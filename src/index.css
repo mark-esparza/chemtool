@@ -246,3 +246,13 @@ ul.plain li { margin: 1px 0; }
   .page { border: none; }
   .content { padding: 10px; }
 }
+
+/* Dense multi-column list for the metabolite browse index. */
+ul.index-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  column-width: 150px;
+  column-gap: 16px;
+}
+ul.index-list li { margin: 0 0 2px; break-inside: avoid; }
