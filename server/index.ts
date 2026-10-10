@@ -12,12 +12,11 @@ import dotenv from "dotenv";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { createServer as createViteServer } from "vite";
 
-import designRoute from "./routes/design.js";
 import pubchemRoute from "./routes/pubchem.js";
 import evaluateRoute from "./routes/evaluate.js";
 import reactionRoute from "./routes/reaction.js";
-import productRoute from "./routes/products.js";
 import hmdbRoute from "./routes/hmdb.js";
+import analogRoute from "./routes/analogs.js";
 
 dotenv.config();
 
@@ -43,9 +42,8 @@ app.use(express.json());
 // Feature API routes.
 app.use(reactionRoute);
 app.use(pubchemRoute);
-app.use(productRoute);
 app.use(hmdbRoute);
-app.use(designRoute);
+app.use(analogRoute);
 app.use(evaluateRoute);
 
 /** Serve the built client in production, or Vite middleware in development. */

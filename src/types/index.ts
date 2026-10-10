@@ -11,38 +11,68 @@ import type { MolecularProperties } from "../lib/chemEngine.js";
 export type { MolecularProperties };
 
 // ---------------------------------------------------------------------------
-// Molecule design pipeline
+// Structural analog search (as returned by /api/analogs)
 // ---------------------------------------------------------------------------
-export interface PropertyConstraint {
-  name: string;
-  op: "<=" | ">=" | "==";
-  value: number;
-  weight: number;
-  hard: boolean;
+
+/** Upper bounds applied to on-device computed properties. null = not applied. */
+export interface AnalogFilters {
+  mwMax: number | null;
+  logpMax: number | null;
+  tpsaMax: number | null;
+  hbdMax: number | null;
+  hbaMax: number | null;
+  rotMax: number | null;
+  lipinskiOnly: boolean;
 }
 
-export interface DesignBrief {
-  objective_summary: string;
-  seed_smiles: string;
-  property_constraints: PropertyConstraint[];
-  admet_limits?: Record<string, string>;
-  novelty: {
-    min_tanimoto_distance_from_seed: number;
-    max: number;
+/** Descriptors as PubChem reports them for a deposited compound. */
+export interface PubChemDescriptors {
+  mw: number | null;
+  xlogp: number | null;
+  tpsa: number | null;
+  hbd: number | null;
+  hba: number | null;
+  rotatableBonds: number | null;
+}
+
+export interface AnalogCandidate {
+  cid: number;
+  name: string | null;
+  formula: string | null;
+  smiles: string | null;
+  /** Authoritative values from PubChem. */
+  pubchem: PubChemDescriptors;
+  /** Values recomputed on-device from the structure; null if not parseable. */
+  computed: MolecularProperties | null;
+  computeError: string | null;
+  /** 1 - Tanimoto similarity to the seed, on this app's own fingerprint. */
+  tanimotoDistance: number | null;
+  passes: boolean;
+  failedFilters: string[];
+  paretoOptimal: boolean;
+  url: string;
+}
+
+export interface AnalogResult {
+  seed: {
+    cid: number;
+    name: string;
+    formula: string;
+    smiles: string;
+    hmdbAccession: string | null;
+    computed: MolecularProperties | null;
+    url: string;
   };
-  must_avoid_alerts: string[];
-  confidence_required: "low" | "medium" | "high";
-  notes?: string;
-}
-
-export interface Candidate extends MolecularProperties {
-  name: string;
-  mutation_rationale: string;
-  tanimoto_distance: number;
-  is_pareto_optimal: boolean;
-  total_cost: number;
-  ood_flag: boolean;
-  is_parent?: boolean;
+  query: {
+    threshold: number;
+    maxRecords: number;
+    truncated: boolean;
+    filters: AnalogFilters;
+    paretoObjectives: string[];
+    retrievedAt: string;
+  };
+  candidates: AnalogCandidate[];
+  counts: { retrieved: number; passing: number; paretoOptimal: number; notScored: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +110,8 @@ export interface PubChemCompound {
   descriptionSource: string;
   descriptionUrl?: string;
   synonyms: string[];
+  /** HMDB accession when PubChem cross-references this compound as a human metabolite. */
+  hmdbAccession: string | null;
   reportUrl: string;
   websiteReportEmbed: string;
 }
@@ -109,28 +141,7 @@ export interface ReactionEnergetics {
 }
 
 // ---------------------------------------------------------------------------
-// Product ingredient breakdown (as returned by /api/product/search)
-// ---------------------------------------------------------------------------
-export interface ProductIngredient {
-  name: string;
-  percent?: number;
-}
-
-export interface ProductBreakdown {
-  product: {
-    name: string;
-    brand: string;
-    image: string;
-    source: string;
-    category: string;
-    code: string;
-    url: string;
-  };
-  ingredients: ProductIngredient[];
-}
-
-// ---------------------------------------------------------------------------
-// HMDB metabolite (as returned by /api/hmdb/search)
+// HMDB metabolite (as returned by /api/hmdb/search and /api/hmdb/batch)
 // ---------------------------------------------------------------------------
 export interface HmdbConcentration {
   biospecimen: string;
@@ -139,23 +150,66 @@ export interface HmdbConcentration {
   condition?: string;
 }
 
+export interface HmdbPathway {
+  name: string;
+  smpdbId: string | null;
+  keggMapId: string | null;
+}
+
+/** An enzyme, transporter, or other protein that acts on the metabolite. */
+export interface HmdbProtein {
+  name: string;
+  gene: string | null;
+  type: string | null;
+  uniprotId: string | null;
+}
+
+export interface HmdbClassification {
+  directParent: string | null;
+  superClass: string | null;
+  class: string | null;
+  subClass: string | null;
+}
+
+/** Identifiers that link the metabolite to other databases (and back into the app). */
+export interface HmdbXrefs {
+  pubchemCid: number | null;
+  keggId: string | null;
+  chebiId: string | null;
+  drugbankId: string | null;
+}
+
 export interface HmdbMetabolite {
   accession: string;
   name: string;
   formula: string | null;
   averageMass: number | null;
+  monoisotopicMass: number | null;
   iupacName: string | null;
   smiles: string | null;
   inchikey: string | null;
+  casNumber: string | null;
   state: string | null;
   description: string | null;
+  synonyms: string[];
+  classification: HmdbClassification | null;
   biospecimens: string[];
   tissues: string[];
-  pathways: string[];
+  cellularLocations: string[];
+  pathways: HmdbPathway[];
   diseases: string[];
+  proteins: HmdbProtein[];
   concentrations: HmdbConcentration[];
+  xrefs: HmdbXrefs;
   url: string;
   structureImage: string;
+}
+
+export interface HmdbBatchResult {
+  query: string;
+  success: boolean;
+  data?: HmdbMetabolite;
+  error?: string;
 }
 
 export interface ResolvedReactant {

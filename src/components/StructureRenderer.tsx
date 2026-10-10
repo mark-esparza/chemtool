@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { parseSmiles } from "../lib/chemEngine";
-import { Atom, RotateCcw, Eye, Layers } from "lucide-react";
 
 interface StructureRendererProps {
   smiles: string;
@@ -733,7 +732,7 @@ export default function StructureRenderer({
         
         {/* Style selection */}
         <div className="flex gap-1.5 items-center">
-          <Layers className="w-3.5 h-3.5 text-blue-400" />
+          
           <div className="bg-slate-900 border border-slate-800 rounded-lg p-0.5 flex gap-1 font-mono">
             <button
               onClick={() => setViewMode("ballAndStick")}
@@ -803,7 +802,7 @@ export default function StructureRenderer({
             title="Reset Camera Position"
             className="p-1 px-1.5 bg-slate-900 border border-slate-800 rounded-lg hover:bg-slate-800 hover:text-white transition flex items-center gap-1 text-[10px] font-mono tracking-wider text-slate-400"
           >
-            <RotateCcw className="w-3 h-3" />
+            
             <span>RESET</span>
           </button>
         </div>
@@ -812,7 +811,7 @@ export default function StructureRenderer({
 
       {/* Floating 3D status badge */}
       <div className="absolute top-3.5 left-3 px-2.5 py-1 pointer-events-none select-none font-mono text-[9px] font-semibold text-slate-300 bg-black/50 backdrop-blur-sm rounded-lg border border-slate-800/80 flex items-center gap-1.5 z-20">
-        <Atom className="w-3 h-3 text-blue-400 animate-spin" style={{ animationDuration: "3s" }} />
+        
         <span>3D BALL-AND-STICK ORBITAL</span>
       </div>
       

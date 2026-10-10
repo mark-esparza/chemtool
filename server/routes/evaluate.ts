@@ -17,10 +17,11 @@ router.post("/api/evaluate", (req, res) => {
     return res.status(400).json({ error: "SMILES parameter is required as string." });
   }
   try {
-    const props = calculateProperties(smiles);
-    res.json(props);
+    res.json(calculateProperties(smiles));
   } catch (e: any) {
-    res.status(500).json({ error: e.message || "Invalid SMILES structure." });
+    // A structure this engine cannot parse is a bad request, not a server
+    // fault, and it must never be answered with placeholder properties.
+    res.status(400).json({ error: `That structure could not be parsed: ${e?.message || "invalid SMILES"}.` });
   }
 });
 

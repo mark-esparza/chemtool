@@ -11,11 +11,10 @@ import type {
   PubChemCompound,
   BatchResult,
   MolecularProperties,
-  DesignBrief,
-  Candidate,
-  Experiment,
-  ProductBreakdown,
   HmdbMetabolite,
+  HmdbBatchResult,
+  AnalogFilters,
+  AnalogResult,
 } from "../types";
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -34,51 +33,43 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data as T;
 }
 
+async function getJson<T>(url: string, fallbackError: string): Promise<T> {
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || fallbackError);
+  return data as T;
+}
+
 export function simulateReaction(reactants: string[], conditions: string): Promise<ReactionResult> {
   return postJson<ReactionResult>("/api/reaction/simulate", { reactants, conditions });
 }
 
-export async function searchCompound(query: string): Promise<PubChemCompound> {
-  const res = await fetch(`/api/pubchem/search?q=${encodeURIComponent(query)}`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || "Compound search failed.");
-  return data as PubChemCompound;
+export function searchCompound(query: string): Promise<PubChemCompound> {
+  return getJson<PubChemCompound>(`/api/pubchem/search?q=${encodeURIComponent(query)}`, "Compound search failed.");
 }
 
 export function batchLookup(queries: string[]): Promise<{ results: BatchResult[] }> {
   return postJson<{ results: BatchResult[] }>("/api/pubchem/batch", { queries });
 }
 
-export async function searchProduct(query: string): Promise<ProductBreakdown> {
-  const res = await fetch(`/api/product/search?q=${encodeURIComponent(query)}`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || "Product search failed.");
-  return data as ProductBreakdown;
+export function searchMetabolite(query: string): Promise<HmdbMetabolite> {
+  return getJson<HmdbMetabolite>(`/api/hmdb/search?q=${encodeURIComponent(query)}`, "Metabolite search failed.");
 }
 
-export async function searchMetabolite(query: string): Promise<HmdbMetabolite> {
-  const res = await fetch(`/api/hmdb/search?q=${encodeURIComponent(query)}`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || "Metabolite search failed.");
-  return data as HmdbMetabolite;
+export function batchMetabolites(queries: string[]): Promise<{ results: HmdbBatchResult[] }> {
+  return postJson<{ results: HmdbBatchResult[] }>("/api/hmdb/batch", { queries });
 }
 
 export function evaluateSmiles(smiles: string): Promise<MolecularProperties> {
   return postJson<MolecularProperties>("/api/evaluate", { smiles });
 }
 
-export interface DesignResult {
-  brief: DesignBrief;
-  candidates: Candidate[];
-  explanation: string;
-  seed_properties: MolecularProperties;
-  seed_pubchem: PubChemCompound | null;
-}
-
-export function runDesignPipeline(
-  prompt: string,
-  numSamples: number,
-  experiments: Experiment[]
-): Promise<DesignResult> {
-  return postJson<DesignResult>("/api/design-pipeline", { prompt, numSamples, experiments });
+/** Structural neighbors of a seed compound, retrieved live from PubChem. */
+export function searchAnalogs(
+  seed: string,
+  threshold: number,
+  maxRecords: number,
+  filters: AnalogFilters
+): Promise<AnalogResult> {
+  return postJson<AnalogResult>("/api/analogs", { seed, threshold, maxRecords, filters });
 }

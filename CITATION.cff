@@ -1,12 +1,17 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata below."
 type: software
-title: "Molecule Design Assistant (chemtool)"
+title: "Chemtool"
 abstract: >-
-  A deterministic chemistry workbench that simulates and balances chemical
-  reactions with analysis reports, designs candidate analogs and scores
-  molecular properties, and searches compounds live on PubChem. All
-  calculations run on device with no AI API key required.
+  A browser workbench for retrieving and comparing chemical and metabolite
+  records from public databases. Resolves compounds on PubChem, retrieves
+  structural analogs from PubChem's 2D similarity service, reads Human
+  Metabolome Database records including pathways and associated enzymes, and
+  balances chemical equations. Structural descriptors are recomputed on-device
+  from the parsed structure and shown beside the source database's own values.
+  Every figure is either retrieved from a named database or produced by a
+  documented calculation; the tool predicts no binding affinity, target,
+  toxicity or synthetic route.
 authors:
   - family-names: Esparza
     given-names: Mark
@@ -14,10 +19,12 @@ authors:
 repository-code: "https://github.com/mark-esparza/chemtool"
 url: "https://mark-esparza.github.io"
 license: Apache-2.0
-version: 1.0.0
+version: 2.0.0
 keywords:
   - cheminformatics
-  - molecular properties
-  - reaction balancing
+  - molecular descriptors
+  - structural similarity
+  - metabolomics
   - PubChem
-  - drug design
+  - HMDB
+  - reaction balancing

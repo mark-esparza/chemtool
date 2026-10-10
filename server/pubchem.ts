@@ -6,6 +6,8 @@
  * data path. Resolves name / SMILES / CID, with autocomplete fuzzy matching.
  */
 
+import { findHmdbAccession } from "./hmdbIds.js";
+
 // Current PubChem PUG-REST property names. (PubChem renamed the SMILES fields in
 // 2025: CanonicalSMILES -> ConnectivitySMILES, IsomericSMILES -> SMILES. Requesting
 // a retired name makes PUG-REST reject the whole request with HTTP 400.)
@@ -125,13 +127,17 @@ export async function fetchPubChemData(q: string) {
       console.error("Failed to fetch description: ", e);
     }
 
-    // Fetch Synonyms
+    // Fetch Synonyms. The full list is scanned for an HMDB accession (HMDB deposits
+    // into PubChem), which cross-links the compound to its human-metabolite record.
     let synonyms: string[] = [];
+    let hmdbAccession: string | null = null;
     try {
       const synResponse = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/synonyms/JSON`);
       if (synResponse.ok) {
         const synData: any = await synResponse.json();
-        synonyms = synData?.InformationList?.Information?.[0]?.Synonym?.slice(0, 10) || [];
+        const all: string[] = synData?.InformationList?.Information?.[0]?.Synonym || [];
+        synonyms = all.slice(0, 10);
+        hmdbAccession = findHmdbAccession(all);
       }
     } catch (e) {
       console.error("Failed to fetch synonyms: ", e);
@@ -155,6 +161,7 @@ export async function fetchPubChemData(q: string) {
       descriptionSource,
       descriptionUrl,
       synonyms,
+      hmdbAccession,
       reportUrl: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}`,
       websiteReportEmbed: `https://pubchem.ncbi.nlm.nih.gov/compound/${cid}#section=Top`,
     };

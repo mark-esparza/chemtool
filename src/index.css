@@ -1,50 +1,248 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&display=swap');
-@import "tailwindcss";
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Chemtool stylesheet.
+ *
+ * Deliberately plain, in the idiom of late-1990s / early-2000s scientific web
+ * tools (NCBI Entrez, ExPASy, BLAST): system fonts that shipped with Windows of
+ * that era, bordered tables for data, horizontal rules between sections,
+ * bevelled form controls, and blue/purple underlined links. No web fonts, no
+ * gradients, no shadows, no animation — the page is the data.
+ */
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  --font-serif: "Playfair Display", Georgia, serif;
-  
-  /* NIH Clinical Light Theme Colors */
-  --color-clinical-bg: #F8FAFC;
-  --color-clinical-panel: #FFFFFF;
-  --color-clinical-sidebar: #F8FAFC; /* Clean off-white sidebar */
-  --color-nih-blue: #0A355C;       /* NIH primary deep corporate blue */
-  --color-neon-blue: #0A355C;      /* Map accent blue to NIH deep blue */
+:root {
+  --desk: #c0c0c0;        /* window-manager gray */
+  --page: #ffffff;        /* document body */
+  --face: #d4d0c8;        /* control face */
+  --ink: #000000;
+  --muted: #555555;
+  --rule: #808080;
+  --link: #0000cc;
+  --visited: #551a8b;
+  --head: #000080;        /* title bar navy */
+  --tint: #eeeeee;        /* table banding */
+  --warn: #ffffcc;
+  --bad: #ffe8e8;
 }
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
 
 body {
-  font-family: var(--font-sans);
-  background-color: #F8FAFC;
-  color: #1E293B;
+  margin: 0;
+  padding: 12px;
+  background: var(--desk);
+  color: var(--ink);
+  font-family: Verdana, Geneva, Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
-/* Custom Sleek Dot Grid */
-.bg-dot-grid {
-  background-image: radial-gradient(#E2E8F0 1.2px, transparent 1px);
-  background-size: 20px 20px;
+a { color: var(--link); }
+a:visited { color: var(--visited); }
+a:hover { color: #cc0000; }
+
+p { margin: 0 0 8px; }
+hr { border: none; border-top: 1px solid var(--rule); margin: 12px 0; }
+
+code, .mono, pre {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 12px;
+}
+/* SMILES and InChIKeys are long unbroken runs; let them wrap rather than
+   widen the page. */
+code { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; }
+
+/* --- Page frame ---------------------------------------------------------- */
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--page);
+  border: 1px solid var(--rule);
 }
 
-/* Motion */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+.masthead {
+  background: var(--head);
+  color: #ffffff;
+  padding: 6px 10px;
 }
-.animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+.masthead h1 {
+  margin: 0;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 22px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+.masthead .tagline { font-size: 11px; color: #ccccdd; }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+.navbar {
+  background: var(--face);
+  border-bottom: 1px solid var(--rule);
+  padding: 5px 10px;
+  font-size: 11px;
 }
-::-webkit-scrollbar-track {
-  background: #F8FAFC;
+.navbar a { margin: 0 2px; }
+.navbar .sep { color: var(--rule); margin: 0 3px; }
+.navbar .here { font-weight: bold; color: var(--ink); text-decoration: none; }
+
+.content { padding: 12px 14px 18px; }
+
+.footer {
+  border-top: 1px solid var(--rule);
+  background: var(--face);
+  padding: 6px 10px;
+  font-size: 10px;
+  color: var(--muted);
 }
-::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
-  border-radius: 3px;
+
+/* --- Headings ------------------------------------------------------------ */
+h2.title {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 19px;
+  margin: 0 0 2px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 3px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+.lede { font-size: 11px; color: var(--muted); margin: 4px 0 12px; }
+
+/* --- Boxes and sections -------------------------------------------------- */
+.box { border: 1px solid var(--rule); margin: 0 0 12px; background: var(--page); }
+.box > .boxhead {
+  background: var(--face);
+  border-bottom: 1px solid var(--rule);
+  padding: 3px 8px;
+  font-weight: bold;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.box > .boxbody { padding: 8px; }
+.box > .boxbody.flush { padding: 0; }
+
+fieldset {
+  border: 1px solid var(--rule);
+  margin: 0 0 12px;
+  padding: 6px 10px 10px;
+  /* Fieldsets default to min-inline-size:min-content, which stops them
+     shrinking below their widest child and pushes the page sideways on a
+     phone. Reset it so the inner .scroll-x can scroll instead. */
+  min-inline-size: 0;
+}
+legend { font-weight: bold; font-size: 11px; padding: 0 4px; }
+
+/* --- Forms --------------------------------------------------------------- */
+input[type="text"], input[type="number"], textarea, select {
+  font-family: Verdana, Geneva, sans-serif;
+  font-size: 12px;
+  padding: 2px 3px;
+  border: 2px inset var(--face);
+  background: #ffffff;
+  color: var(--ink);
+}
+input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:focus {
+  outline: 1px dotted var(--ink);
+}
+textarea { font-family: "Courier New", Courier, monospace; }
+input.mono { font-family: "Courier New", Courier, monospace; }
+input[disabled], button[disabled] { color: #808080; }
+
+button {
+  font-family: Verdana, Geneva, sans-serif;
+  font-size: 11px;
+  padding: 2px 10px;
+  min-height: 22px;
+  border: 2px outset var(--face);
+  background: var(--face);
+  color: var(--ink);
+  cursor: pointer;
+}
+button:active:not([disabled]) { border-style: inset; }
+button[disabled] { cursor: default; }
+button.primary { font-weight: bold; }
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  color: var(--link);
+  text-decoration: underline;
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+button.link:hover { color: #cc0000; }
+
+label.fld { display: block; margin-bottom: 6px; }
+label.fld > .lbl { display: block; font-size: 11px; font-weight: bold; margin-bottom: 2px; }
+label.fld > .hint { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.row > .grow { flex: 1 1 220px; min-width: 0; }
+.stack > * + * { margin-top: 8px; }
+
+/* --- Tables -------------------------------------------------------------- */
+table.grid { border-collapse: collapse; width: 100%; font-size: 11px; }
+table.grid th, table.grid td {
+  border: 1px solid var(--rule);
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+table.grid th { background: var(--face); font-weight: bold; white-space: nowrap; }
+table.grid tbody tr:nth-child(even) { background: var(--tint); }
+table.grid td.num, table.grid th.num { text-align: right; font-family: "Courier New", Courier, monospace; }
+table.grid tr.flag { background: var(--warn); }
+table.grid tr.fail td { color: var(--muted); }
+
+table.kv { border-collapse: collapse; font-size: 11px; }
+table.kv td { padding: 1px 10px 1px 0; vertical-align: top; }
+table.kv td.k { font-weight: bold; white-space: nowrap; }
+
+.scroll-x { overflow-x: auto; }
+.scroll-y { overflow-y: auto; max-height: 320px; }
+
+/* --- Small parts --------------------------------------------------------- */
+.tag {
+  display: inline-block;
+  border: 1px solid var(--rule);
+  background: var(--tint);
+  padding: 0 4px;
+  margin: 0 3px 3px 0;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.tag.ok { background: #e6ffe6; }
+.tag.warn { background: var(--warn); }
+.tag.bad { background: var(--bad); }
+
+.note { border: 1px solid var(--rule); padding: 6px 8px; margin: 0 0 10px; font-size: 11px; }
+.note.err { background: var(--bad); border-color: #cc0000; }
+.note.info { background: var(--warn); }
+.note strong { display: block; margin-bottom: 2px; }
+
+.busy { padding: 14px 0; font-size: 11px; color: var(--muted); }
+.empty { padding: 22px 10px; text-align: center; color: var(--muted); font-size: 11px; }
+.empty .t { font-weight: bold; color: var(--ink); display: block; margin-bottom: 3px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 10px; }
+.nowrap { white-space: nowrap; }
+.right { text-align: right; }
+.struct { border: 1px solid var(--rule); background: #ffffff; padding: 4px; }
+
+ul.plain { margin: 4px 0; padding-left: 18px; }
+ul.plain li { margin: 1px 0; }
+
+/* Two-column layout that collapses on narrow screens. */
+.cols { display: flex; flex-wrap: wrap; gap: 12px; }
+.cols > .col { flex: 1 1 320px; min-width: 0; }
+
+@media (max-width: 600px) {
+  body { padding: 0; }
+  .page { border: none; }
+  .content { padding: 10px; }
 }
