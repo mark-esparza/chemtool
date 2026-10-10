@@ -1,6 +1,8 @@
 name: CI
 
-# Keep main deployable: type-check and unit-test the project on every push and PR.
+# Keep main deployable: on every push and PR, type-check, unit-test, AND run
+# the exact production build Render runs, on the exact Node version Render uses
+# (.node-version). A green run here means Render can build the same commit.
 on:
   push:
   pull_request:
@@ -11,15 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  typecheck:
-    name: Type check & tests
+  build:
+    name: Type-check, test & production build (Render parity)
     runs-on: ubuntu-latest
+    # Build under the same NODE_ENV Render sets, so dev-dependency pruning
+    # behaves identically to the live deploy.
+    env:
+      NODE_ENV: production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .node-version
           cache: npm
       - run: npm ci --include=dev
       - run: npm run lint
       - run: npm test
+      # Mirrors render.yaml: buildCommand = "npm ci --include=dev && npm run build".
+      - run: npm run build
