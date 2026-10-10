@@ -2,17 +2,15 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * "Your bank vs. the human metabolome": profile the chemicals collected from
- * products, searches, and designs against HMDB to see which ones the body
- * itself makes or carries, and open any of them in the explorer.
+ * Checks the chemicals collected in the bank against HMDB, to see which of them
+ * the human body also produces or carries.
  */
 
 import React, { useState } from "react";
-import { Beaker, ScanSearch, ArrowRight } from "lucide-react";
-import { Panel, Button, Badge, ErrorNote } from "../../components/ui";
+import { Box, Btn, Tag, Note, LinkBtn } from "../../components/ui";
 import { batchMetabolites } from "../../api/client";
 import type { HmdbMetabolite } from "../../types";
-import { useBank, setBankHmdb, BankChemical } from "../bank/store";
+import { useBank, setBankHmdb, removeFromBank, clearBank, BankChemical } from "../bank/store";
 
 const BATCH = 10;
 
@@ -32,7 +30,8 @@ export default function BankProfile({ onOpen }: { onOpen: (m: HmdbMetabolite) =>
   const check = async () => {
     const chunk = pending.slice(0, BATCH);
     if (chunk.length === 0) return;
-    setLoading(true); setError("");
+    setLoading(true);
+    setError("");
     try {
       const { results } = await batchMetabolites(chunk.map(queryFor));
       const next: Record<string, Row> = {};
@@ -48,9 +47,11 @@ export default function BankProfile({ onOpen }: { onOpen: (m: HmdbMetabolite) =>
         }
       });
       setRows((s) => ({ ...s, ...next }));
-      if (Object.values(next).every((r) => r.status === "error")) setError("HMDB is unreachable right now, so the bank couldn't be profiled. Try again shortly.");
+      if (Object.values(next).every((r) => r.status === "error")) {
+        setError("HMDB is unreachable right now, so the bank could not be checked. Try again shortly.");
+      }
     } catch (e: any) {
-      setError(e?.message || "Bank profile failed.");
+      setError(e?.message || "Bank check failed.");
     } finally {
       setLoading(false);
     }
@@ -60,52 +61,70 @@ export default function BankProfile({ onOpen }: { onOpen: (m: HmdbMetabolite) =>
   const checked = bank.filter((c) => rows[c.id] && rows[c.id].status !== "error").length;
 
   return (
-    <Panel
-      title="Your bank vs. the human metabolome"
-      icon={Beaker}
-      actions={
-        <Button variant="secondary" icon={ScanSearch} loading={loading} onClick={check} disabled={pending.length === 0}>
-          {pending.length === 0 ? "All checked" : `Check ${Math.min(BATCH, pending.length)}${pending.length > BATCH ? ` of ${pending.length}` : ""}`}
-        </Button>
-      }
+    <Box
+      title={`Chemical bank (${bank.length}) checked against HMDB`}
+      actions={<LinkBtn onClick={() => clearBank()}>empty bank</LinkBtn>}
+      flush
     >
-      <p className="mb-3 text-[12px] text-slate-500">
-        Which chemicals in your bank does the human body itself make or carry? {checked > 0 && <span className="font-medium text-slate-700">{found} of {checked} checked are human metabolites.</span>}
-      </p>
-      {error && <div className="mb-3"><ErrorNote>{error}</ErrorNote></div>}
-      <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
-        {bank.map((c) => {
-          const r = rows[c.id];
-          return (
-            <div key={c.id} className="flex items-center justify-between gap-3 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-slate-800">{c.name}</div>
-                <div className="font-mono text-[11px] text-slate-400">{c.formula}{c.source ? <span className="ml-2 font-sans">· {c.source}</span> : null}</div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {r?.status === "found" ? (
-                  <>
-                    <span className="hidden text-[11px] text-slate-400 sm:inline">
-                      {r.data.biospecimens.length} biofluids · {r.data.pathways.length} pathways
-                    </span>
-                    <button onClick={() => onOpen(r.data)} className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 cursor-pointer">
-                      {r.data.accession} <ArrowRight className="h-3 w-3" />
-                    </button>
-                  </>
-                ) : r?.status === "absent" ? (
-                  <Badge tone="slate">not in HMDB</Badge>
-                ) : r?.status === "error" ? (
-                  <Badge tone="amber">retry</Badge>
-                ) : c.hmdb ? (
-                  <Badge tone="green">{c.hmdb}</Badge>
-                ) : (
-                  <span className="text-[11px] text-slate-300">unchecked</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ padding: "6px 8px" }}>
+        <p className="small muted" style={{ marginBottom: 6 }}>
+          Which of the chemicals you have collected are also recorded human metabolites?
+          {checked > 0 && ` ${found} of ${checked} checked so far are in HMDB.`}
+        </p>
+        {error && <Note kind="err">{error}</Note>}
+        <Btn busy={loading} onClick={check} disabled={pending.length === 0}>
+          {pending.length === 0
+            ? "All checked"
+            : `Check ${Math.min(BATCH, pending.length)}${pending.length > BATCH ? ` of ${pending.length}` : ""}`}
+        </Btn>
       </div>
-    </Panel>
+      <div className="scroll-x">
+        <table className="grid">
+          <thead>
+            <tr>
+              <th scope="col">Chemical</th>
+              <th scope="col">Formula</th>
+              <th scope="col">Added from</th>
+              <th scope="col">HMDB</th>
+              <th scope="col" />
+            </tr>
+          </thead>
+          <tbody>
+            {bank.map((c) => {
+              const r = rows[c.id];
+              return (
+                <tr key={c.id}>
+                  <td>{c.name}</td>
+                  <td className="mono">{c.formula || "—"}</td>
+                  <td className="small muted">{c.source || "—"}</td>
+                  <td>
+                    {r?.status === "found" ? (
+                      <>
+                        <LinkBtn onClick={() => onOpen(r.data)}>{r.data.accession}</LinkBtn>
+                        <span className="small muted">
+                          {" "}
+                          ({r.data.biospecimens.length} biofluids, {r.data.pathways.length} pathways)
+                        </span>
+                      </>
+                    ) : r?.status === "absent" ? (
+                      <span className="muted small">not in HMDB</span>
+                    ) : r?.status === "error" ? (
+                      <Tag tone="bad">retry</Tag>
+                    ) : c.hmdb ? (
+                      <Tag tone="ok">{c.hmdb}</Tag>
+                    ) : (
+                      <span className="muted small">unchecked</span>
+                    )}
+                  </td>
+                  <td>
+                    <LinkBtn onClick={() => removeFromBank(c.id)}>remove</LinkBtn>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Box>
   );
 }

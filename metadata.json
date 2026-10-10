@@ -1,6 +1,6 @@
 {
-  "name": "Molecule Design Assistant",
-  "description": "A deterministic chemistry workbench: simulate and balance reactions with analysis reports, design candidate analogs and score molecular properties, and search any compound live on PubChem — all on-device, no AI API key required.",
+  "name": "Chemtool",
+  "description": "Retrieve and compare chemical and metabolite records from public databases: PubChem compound lookup, PubChem 2D structural-analog search, Human Metabolome Database records with pathways and enzymes, and deterministic equation balancing. Descriptors are shown both as the source database reports them and as recomputed on-device from the structure.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

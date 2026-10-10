@@ -14,7 +14,7 @@ import {
   setPendingMetabolite,
   setPendingCompound,
   setPendingReactants,
-  setPendingDesignSeed,
+  setPendingAnalogSeed,
   setPendingNotebookDraft,
   NotebookDraft,
 } from "../../store/handoff";
@@ -56,7 +56,7 @@ export function pubchemQueryFor(m: HmdbMetabolite): string {
 
 export function analyzeMetabolite(m: HmdbMetabolite) {
   setPendingCompound(pubchemQueryFor(m));
-  navigate("search");
+  navigate("compounds");
 }
 
 export function reactMetabolite(m: HmdbMetabolite) {
@@ -65,10 +65,12 @@ export function reactMetabolite(m: HmdbMetabolite) {
   navigate("reactions");
 }
 
-export function designFromMetabolite(m: HmdbMetabolite) {
-  if (!m.smiles) return;
-  setPendingDesignSeed({ name: m.name, smiles: m.smiles });
-  navigate("designer");
+/** Seed an analog search from this metabolite, preferring its PubChem CID. */
+export function analogsFromMetabolite(m: HmdbMetabolite) {
+  const seed = m.xrefs.pubchemCid ? String(m.xrefs.pubchemCid) : m.smiles;
+  if (!seed) return;
+  setPendingAnalogSeed(seed);
+  navigate("analogs");
 }
 
 const fmtConc = (c: HmdbMetabolite["concentrations"][number]) => `${c.biospecimen}: ${c.value}${c.units ? ` ${c.units}` : ""}`;
@@ -80,11 +82,11 @@ export function notebookDraftFor(m: HmdbMetabolite): NotebookDraft {
   const enzymes = m.proteins.filter((p) => !p.type || /enzyme/i.test(p.type)).slice(0, 5);
   if (enzymes.length) parts.push(`Key enzymes: ${enzymes.map((p) => p.gene || p.name).join(", ")}.`);
   if (m.diseases.length) parts.push(`Associated diseases: ${m.diseases.slice(0, 4).join(", ")}.`);
-  parts.push(`Source: ${m.url}`);
+  parts.push(`Source: ${m.url} (retrieved ${new Date().toISOString().slice(0, 10)}).`);
   return {
     name: `${m.name} (${m.accession})`,
     smiles: m.smiles || undefined,
-    assay: "Metabolite profile (HMDB)",
+    assay: "HMDB record retrieval",
     resultValue: m.concentrations[0] ? fmtConc(m.concentrations[0]) : undefined,
     notes: parts.join(" "),
     source: "Metabolites",

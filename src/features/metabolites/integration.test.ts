@@ -12,10 +12,10 @@ import type { HmdbMetabolite } from "../../types/index.ts";
 import { addToBank, clearBank, setBankHmdb, getBank } from "../bank/store.ts";
 import {
   bankEntryFor, bankMetabolite, notebookDraftFor, pubchemQueryFor, pathwayLinks,
-  openMetabolite, designFromMetabolite, logMetabolite, analyzeMetabolite, reactMetabolite,
+  openMetabolite, analogsFromMetabolite, logMetabolite, analyzeMetabolite, reactMetabolite,
 } from "./actions.ts";
 import {
-  takePendingMetabolite, takePendingDesignSeed, takePendingNotebookDraft, takePendingCompound, takePendingReactants,
+  takePendingMetabolite, takePendingAnalogSeed, takePendingNotebookDraft, takePendingCompound, takePendingReactants,
 } from "../../store/handoff.ts";
 
 const glucose: HmdbMetabolite = {
@@ -78,12 +78,12 @@ test("HMDB accession de-duplicates entries that lack a CID", () => {
 test("notebook draft summarizes the biology for review", () => {
   const d = notebookDraftFor(glucose);
   assert.equal(d.name, "D-Glucose (HMDB0000122)");
-  assert.equal(d.assay, "Metabolite profile (HMDB)");
+  assert.equal(d.assay, "HMDB record retrieval");
   assert.equal(d.resultValue, "Blood: 5000.0 +/- 1000.0 uM");
   assert.match(d.notes!, /Pathways: Glycolysis, Pentose phosphate\./);
   assert.match(d.notes!, /Key enzymes: HK1\./); // transporters aren't enzymes
   assert.match(d.notes!, /Associated diseases: Diabetes mellitus type 2\./);
-  assert.match(d.notes!, /Source: https:\/\/hmdb\.ca\/metabolites\/HMDB0000122/);
+  assert.match(d.notes!, /Source: https:\/\/hmdb\.ca\/metabolites\/HMDB0000122 \(retrieved \d{4}-\d{2}-\d{2}\)/);
 });
 
 test("handoffs deliver one-shot payloads to the destination feature", () => {
@@ -91,8 +91,11 @@ test("handoffs deliver one-shot payloads to the destination feature", () => {
   assert.equal(takePendingMetabolite(), "HMDB0000122");
   assert.equal(takePendingMetabolite(), null);
 
-  designFromMetabolite(glucose);
-  assert.deepEqual(takePendingDesignSeed(), { name: "D-Glucose", smiles: glucose.smiles });
+  // An analog search is seeded by CID when HMDB cross-references one, else by structure.
+  analogsFromMetabolite(glucose);
+  assert.equal(takePendingAnalogSeed(), "5793");
+  analogsFromMetabolite({ ...glucose, xrefs: { ...glucose.xrefs, pubchemCid: null } });
+  assert.equal(takePendingAnalogSeed(), glucose.smiles);
 
   logMetabolite(glucose);
   assert.equal(takePendingNotebookDraft()?.source, "Metabolites");

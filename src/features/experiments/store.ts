@@ -11,19 +11,6 @@ import type { Experiment } from "../../types";
 
 const KEY = "chemstudio_experiments";
 
-const SEED: Experiment[] = [
-  {
-    id: "exp-1",
-    smiles: "CC(=O)OC1=CC=CC=C1C(=O)O",
-    name: "Acetylsalicylic Acid (Aspirin)",
-    assay: "COX-2 Inhibition Assay",
-    resultValue: "IC50 = 240 nM",
-    outcome: "success",
-    notes: "High target potency validated in vitro. Moderate gastrointestinal irritation noted.",
-    createdAt: "2026-06-19T10:00:00Z",
-  },
-];
-
 let experiments: Experiment[] = load();
 const listeners = new Set<() => void>();
 
@@ -34,7 +21,8 @@ function load(): Experiment[] {
   } catch {
     /* ignore */
   }
-  return SEED;
+  // Starts empty: a seeded example would put invented results in the record.
+  return [];
 }
 
 function persist() {

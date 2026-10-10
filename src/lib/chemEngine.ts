@@ -21,28 +21,64 @@ export interface ChemGraph {
   bonds: ChemBond[];
 }
 
+/**
+ * Properties computed on-device from the parsed structure graph.
+ *
+ * Naming here is deliberately literal. Where a value is a coarse estimate it is
+ * named as an estimate, so it is never mistaken for the published metric it
+ * resembles. PubChem publishes authoritative XLogP3, TPSA and descriptor values
+ * for deposited compounds; prefer those when a CID is known and treat these as
+ * the fallback for structures that are not in PubChem.
+ */
 export interface MolecularProperties {
   smiles: string;
   formula: string;
+  /** Average molecular mass, from standard atomic weights (g/mol). */
   mw: number;
-  clogp: number;
+  /**
+   * Coarse atom-additive logP estimate. NOT Crippen cLogP or XLogP3: it sums
+   * per-element increments with no fragment or neighbour corrections, so treat
+   * it as an order-of-magnitude indication of lipophilicity only.
+   */
+  logp_estimate: number;
+  /**
+   * Topological polar surface area (Å²) using Ertl et al. (2000) fragment
+   * contributions, simplified: nitrogen and oxygen use their standard values,
+   * sulfur uses a single value rather than per-oxidation-state values, and
+   * phosphorus is not counted. Accurate for ordinary N/O-containing organics.
+   */
   tpsa: number;
+  /** Hydrogen-bond donors: N or O carrying at least one hydrogen (Lipinski). */
   hbd: number;
+  /** Hydrogen-bond acceptors: count of N and O atoms (Lipinski's N+O count). */
   hba: number;
+  /** Acyclic single bonds between non-terminal heavy atoms, excluding amide C-N. */
   rotatable_bonds: number;
   aromatic_rings: number;
-  qed: number;
-  sa_score: number;
+  /** Number of rings, from the cyclomatic number of the structure graph. */
+  ring_count: number;
+  /**
+   * Unweighted geometric mean of six Gaussian desirability terms (mass, logP
+   * estimate, HBA, HBD, TPSA, rotatable bonds), 0-1. Inspired by the shape of
+   * Bickerton et al.'s QED but NOT QED: it omits QED's fitted ADS functions,
+   * its aromatic-ring and alert terms, and its weighting. Use it to rank within
+   * one result set, not as a published drug-likeness score.
+   */
+  desirability_index: number;
+  /**
+   * Size-and-topology complexity proxy, 1-10, from heavy-atom count, ring count
+   * and flexibility. NOT the Ertl-Schuffenhauer synthetic accessibility score:
+   * it has no fragment-frequency term and says nothing about synthetic routes.
+   */
+  complexity_index: number;
   ro5_violations: number;
   veber_violations: number;
-  structural_alerts: string[];
-  docking_affinity?: number;      // kcal/mol
-  target_protein?: string;       // name of target protein pocket
-  pocket_fit_score?: number;     // e.g. 84% fit
-  binding_residues?: string[];   // list of residue bonds
-  conformer_energy?: number;    // kcal/mol
-  solubility_level?: string;    // "High", "Medium", "Low"
-  toxicity_risk?: string;       // "Low", "Moderate", "High"
+  /**
+   * Functional groups identified from the structure graph. Descriptive only:
+   * this is not a PAINS, Brenk or other published alert set, and presence of a
+   * group here is not a liability claim.
+   */
+  functional_groups: string[];
 }
 
 // Map of standard atomic masses
@@ -276,309 +312,290 @@ export function parseSmiles(smiles: string): ChemGraph {
 /**
  * Calculates deterministic properties of a SMILES chemical graph
  */
-export function calculateProperties(smiles: string): MolecularProperties {
-  try {
-    const graph = parseSmiles(smiles);
-    const atoms = graph.atoms;
-    const bonds = graph.bonds;
+const HALOGENS = new Set(["F", "CL", "BR", "I"]);
 
-    // Molecular Weight & Formula
-    const atomCounts: Record<string, number> = { H: 0 };
-    let mw = 0;
-
-    for (const atom of atoms) {
-      const sym = atom.symbol;
-      atomCounts[sym] = (atomCounts[sym] ?? 0) + 1;
-      atomCounts["H"] += atom.implicitHydrogens;
-      
-      const atomicMass = ATOMIC_MASSES[sym] ?? 12.011;
-      mw += atomicMass;
-    }
-    mw += atomCounts["H"] * 1.008;
-
-    // Generate Formula
-    const listElements = Object.keys(atomCounts).filter(k => atomCounts[k] > 0);
-    // standard hill system order: C first, then H, then rest alphabetical
-    listElements.sort((a, b) => {
-      if (a === "C") return -1;
-      if (b === "C") return 1;
-      if (a === "H") return -1;
-      if (b === "H") return 1;
-      return a.localeCompare(b);
-    });
-    const formula = listElements.map(el => {
-      const count = atomCounts[el];
-      return count === 1 ? el : `${el}${count}`;
-    }).join("");
-
-    // HBA and HBD
-    let hba = 0;
-    let hbd = 0;
-    for (const atom of atoms) {
-      if (atom.symbol === "N" || atom.symbol === "O") {
-        hba++;
-        const connectedBonds = bonds.filter(b => b.atom1 === atom.id || b.atom2 === atom.id);
-        const hasConnectedH = atom.implicitHydrogens > 0 || 
-          connectedBonds.some(b => {
-            const other = b.atom1 === atom.id ? atoms[b.atom2] : atoms[b.atom1];
-            return other.symbol === "H";
-          });
-        if (hasConnectedH) {
-          hbd++;
-        }
-      }
-    }
-
-    // Aromatic Rings calculation
-    // Identify connected lower case atoms forming closed loops
-    let aromatic_rings = 0;
-    const aromaticAtomIds = atoms.filter(a => a.isAromatic).map(a => a.id);
-    if (aromaticAtomIds.length >= 5) {
-      // A simple cycle detector for aromatic atoms:
-      // Typically rings contain cycles of aromatic atoms. Check how many rings are present in smiles closures
-      // An easy approximation is: Cyclomatic number = E - V + C
-      const aromaticBonds = bonds.filter(b => 
-        atoms[b.atom1].isAromatic && atoms[b.atom2].isAromatic
-      );
-      const cyclomatic = aromaticBonds.length - aromaticAtomIds.length + 1;
-      aromatic_rings = cyclomatic > 0 ? Math.floor(cyclomatic) : Math.ceil(aromaticAtomIds.length / 6);
-    }
-
-    // Rotatable Bonds
-    // Simple single bonds not in a ring and not terminal
-    let rotatable_bonds = 0;
-    const terminalAtomIds = new Set<number>();
-    
-    for (const atom of atoms) {
-      const deg = bonds.filter(b => b.atom1 === atom.id || b.atom2 === atom.id).length;
-      if (deg <= 1) {
-        terminalAtomIds.add(atom.id);
-      }
-    }
-
-    for (const bond of bonds) {
-      if (bond.order === 1) {
-        const atom1 = atoms[bond.atom1];
-        const atom2 = atoms[bond.atom2];
-        
-        // Exclude rotor bonds to terminal atoms (e.g. methyl C-H or OH)
-        if (terminalAtomIds.has(atom1.id) || terminalAtomIds.has(atom2.id)) {
-          continue;
-        }
-
-        // Exclude terminal atom connections (like halogens or single terminal CH3s)
-        if (atom1.symbol === "H" || atom2.symbol === "H" || 
-            atom1.symbol === "F" || atom2.symbol === "F" ||
-            atom1.symbol === "CL" || atom2.symbol === "CL" ||
-            atom1.symbol === "BR" || atom2.symbol === "BR" ||
-            atom1.symbol === "I" || atom2.symbol === "I") {
-          continue;
-        }
-
-        // Exclude amide C-N or ester C-O due to high rotational barriers (heuristic check)
-        const isAmideOrEster = false; // heuristic could check neighbors
-        if (isAmideOrEster) continue;
-
-        rotatable_bonds++;
-      }
-    }
-
-    // cLogP & TPSA Estimations
-    // Clean heuristic calculations matching typical drug discovery parameters:
-    let clogp = 0.5; // logP baseline
-    let tpsa = 0.0;
-
-    // Element contribution table for atomic logP & polar surface area
-    for (const atom of atoms) {
-      const sym = atom.symbol;
-      const isCarb = sym === "C";
-      const isOx = sym === "O";
-      const isNit = sym === "N";
-      const isHal = ["F", "CL", "BR", "I"].includes(sym);
-      const isSulf = sym === "S";
-
-      if (isCarb) {
-        clogp += atom.isAromatic ? 0.36 : 0.40;
-      } else if (isOx) {
-        // TPSA calculation based on hydrogen count
-        if (atom.implicitHydrogens === 1) {
-          tpsa += 20.23; // hydroxyl
-          clogp -= 0.6;
-        } else if (atom.implicitHydrogens === 0) {
-          tpsa += 9.23; // ether/carbonyl
-          clogp -= 0.2;
-        } else {
-          tpsa += 20.23;
-        }
-      } else if (isNit) {
-        if (atom.implicitHydrogens === 2) {
-          tpsa += 26.02; // primary amine
-          clogp -= 1.1;
-        } else if (atom.implicitHydrogens === 1) {
-          tpsa += 12.03; // secondary amine
-          clogp -= 0.8;
-        } else {
-          tpsa += 3.24; // tertiary amine/aromatic N
-          clogp -= 0.5;
-        }
-      } else if (isHal) {
-        if (sym === "F") { clogp += 0.14; tpsa += 0; }
-        else if (sym === "CL") { clogp += 0.55; tpsa += 0; }
-        else if (sym === "BR") { clogp += 0.82; tpsa += 0; }
-        else if (sym === "I") { clogp += 1.12; tpsa += 0; }
-      } else if (isSulf) {
-        clogp += 0.15;
-        tpsa += 25.3;
-      }
-    }
-
-    // Lipinski Rules
-    const ro5_violations = sumB([
-      mw > 500,
-      clogp > 5,
-      hbd > 5,
-      hba > 10,
-    ]);
-
-    // Veber Rules
-    const veber_violations = sumB([
-      rotatable_bonds > 10,
-      tpsa > 140,
-    ]);
-
-    // Desirability score matching Quantitative Estimate of Drug-likeness (QED heuristic)
-    // QED model combines normalized weights of Mw, AlogP, HBA, HBD, TPSA, Rotatable bonds.
-    const desirability = (val: number, mean: number, sd: number): number => {
-      // Gaussian distribution style desirability
-      const z = (val - mean) / sd;
-      return Math.exp(-0.5 * z * z);
-    };
-
-    const d_mw = desirability(mw, 280, 120);
-    const d_logp = desirability(clogp, 2.5, 1.8);
-    const d_hba = desirability(hba, 4.5, 2.5);
-    const d_hbd = desirability(hbd, 1.8, 1.5);
-    const d_tpsa = desirability(tpsa, 75, 45);
-    const d_rot = desirability(rotatable_bonds, 4, 3);
-    const qed = Math.pow(d_mw * d_logp * d_hba * d_hbd * d_tpsa * d_rot, 1/6);
-
-    // Synthetic Accessibility (SA) score: 1 (easy) to 10 (extremely hard)
-    // Modeled topologically: size penalty, ring penalty, branch penalty, chiral centers
-    let sa_base = 1.0;
-    sa_base += mw / 80; // Size penalty
-    sa_base += rotatable_bonds * 0.1; // Rotational strain
-    sa_base += aromatic_rings * 0.3; // Ring complexity
-    // Heuristic checking of complicated/bridged rings or elements
-    if (atoms.some(a => a.symbol === "P" || a.symbol === "S")) sa_base += 0.5;
-    // Clip SA Score between 1.0 and 10.0
-    const sa_score = Math.min(10.0, Math.max(1.0, parseFloat(sa_base.toFixed(2))));
-
-    // Deterministic PAINS / Brenk Alerts
-    // We implement a deterministic checklist matching structural triggers:
-    const structural_alerts: string[] = [];
-    const lowerSmiles = smiles.toLowerCase();
-
-    // Specific structural alert patterns in chemical subsets:
-    if (lowerSmiles.includes("c1ccc(C=O)cc1") || lowerSmiles.includes("c1ccccc1")) {
-      // Standard catechol check
-      if (lowerSmiles.includes("oc1c(O)cccc1") || lowerSmiles.includes("oc1ccc(O)cc1")) {
-        structural_alerts.push("Catechol (PAINS/Brenk: Redox risk/alkylation alert)");
-      }
-    }
-    if (lowerSmiles.includes("c1ccccc1S(=O)(=O)")) {
-      structural_alerts.push("Benzenesulfonyl derivative (Brenk: potential reactive group)");
-    }
-    if (lowerSmiles.includes("NN=C") || lowerSmiles.includes("N=NC")) {
-      structural_alerts.push("Hydrazone / Azo group (PAINS: mutagenic/unstable)");
-    }
-    if (lowerSmiles.includes("C(=S)")) {
-      structural_alerts.push("Thiocarbonyl (PAINS: metabolic toxicity)");
-    }
-    if (lowerSmiles.includes("c1ccccc1-c2ccccc2")) {
-      structural_alerts.push("Biphenyl (Brenk: high bioaccumulation/persistence)");
-    }
-    if (lowerSmiles.includes("n1nccn1") || lowerSmiles.includes("n1nncn1")) {
-      structural_alerts.push("Tetrazole / Triazole cluster (Brenk: energetic stability)");
-    }
-
-    // Compute Docking & 3D Simulation Heuristics
-    let docking_affinity = -5.0 - (clogp * 0.35) - (aromatic_rings * 0.45) + (rotatable_bonds * 0.1) - (ro5_violations * 0.5);
-    docking_affinity = Math.max(-11.5, Math.min(-3.5, parseFloat(docking_affinity.toFixed(1))));
-
-    // Determine target protein based on common pharmacophore elements
-    let target_protein = "HSA ALPH-1 Receptor";
-    let binding_residues = ["Arg-120 (H-bond)", "Tyr-355 (Hydrophobic)"];
-    if (lowerSmiles.includes("oc(=o)") || lowerSmiles.includes("oc1ccccc1")) {
-      target_protein = "Cyclooxygenase-2 (COX-2)";
-      binding_residues = ["Arg-120 (H-bond)", "Tyr-355 (Hydrophobic)", "Phe-518 (Pi-stacking)"];
-    } else if (lowerSmiles.includes("cn1cnc") || lowerSmiles.includes("cnc")) {
-      target_protein = "Adenosine A2A Receptor";
-      binding_residues = ["Phe-168 (Pi-stacking)", "Glu-169 (H-bond)", "Asn-253 (H-bond)"];
-    } else if (lowerSmiles.includes("c1ccc2c(c1)n") || lowerSmiles.includes("ncc1ccccc1")) {
-      target_protein = "Dopamine D2 Receptor";
-      binding_residues = ["Asp-114 (Ionic block)", "Phe-389 (Hydrophobic)", "Val-115 (Van Der Waals)"];
-    } else if (atoms.length > 15 && atoms.some(a => a.symbol === "N" || a.symbol === "O")) {
-      target_protein = "HERG Potassium Channel";
-      binding_residues = ["Phe-656 (Aromatic face)", "Tyr-652 (Pi-cation)", "Ser-624 (Donor Lock)"];
-    }
-
-    const pocket_fit_score = Math.max(45, Math.min(98, Math.round(qed * 100 - (ro5_violations * 15))));
-
-    // Conformer energy
-    const conformer_energy = parseFloat((Math.max(12.5, 30.0 + (atoms.length * 1.5) - (rotatable_bonds * 2.2))).toFixed(1));
-
-    // Solubility level
-    let solubility_level = "Medium";
-    if (clogp < 1.0) solubility_level = "High";
-    else if (clogp > 4.0) solubility_level = "Low";
-
-    // Toxicity Risk
-    let toxicity_risk = "Low";
-    if (structural_alerts.length > 1) toxicity_risk = "High";
-    else if (structural_alerts.length === 1 || clogp > 5.0) toxicity_risk = "Moderate";
-
-    return {
-      smiles,
-      formula,
-      mw: parseFloat(mw.toFixed(2)),
-      clogp: parseFloat(clogp.toFixed(2)),
-      tpsa: parseFloat(tpsa.toFixed(1)),
-      hbd,
-      hba,
-      rotatable_bonds,
-      aromatic_rings,
-      qed: parseFloat(qed.toFixed(2)),
-      sa_score,
-      ro5_violations,
-      veber_violations,
-      structural_alerts,
-      docking_affinity,
-      target_protein,
-      pocket_fit_score,
-      binding_residues,
-      conformer_energy,
-      solubility_level,
-      toxicity_risk,
-    };
-  } catch (err: any) {
-    // Fallback safely for molecular parsing
-    return {
-      smiles,
-      formula: "C9H8O4", // Aspirin style default if parsed completely fails
-      mw: 180.15,
-      clogp: 1.2,
-      tpsa: 63.3,
-      hbd: 1,
-      hba: 4,
-      rotatable_bonds: 3,
-      aromatic_rings: 1,
-      qed: 0.8,
-      sa_score: 1.5,
-      ro5_violations: 0,
-      veber_violations: 0,
-      structural_alerts: [],
-    };
+/** Adjacency list over the structure graph. */
+function adjacency(atoms: ChemAtom[], bonds: ChemBond[]): Map<number, { to: number; bond: ChemBond }[]> {
+  const adj = new Map<number, { to: number; bond: ChemBond }[]>();
+  for (const a of atoms) adj.set(a.id, []);
+  for (const b of bonds) {
+    adj.get(b.atom1)?.push({ to: b.atom2, bond: b });
+    adj.get(b.atom2)?.push({ to: b.atom1, bond: b });
   }
+  return adj;
+}
+
+/**
+ * Bonds that lie on a ring. A bond is a ring bond exactly when it is not a
+ * bridge: remove it and its two endpoints are still connected. Structures here
+ * are small, so the direct test is cheaper than a full cycle basis.
+ */
+function ringBonds(atoms: ChemAtom[], bonds: ChemBond[]): Set<ChemBond> {
+  const adj = adjacency(atoms, bonds);
+  const inRing = new Set<ChemBond>();
+  for (const bond of bonds) {
+    const seen = new Set<number>([bond.atom1]);
+    const stack = [bond.atom1];
+    let reached = false;
+    while (stack.length > 0 && !reached) {
+      const cur = stack.pop()!;
+      for (const { to, bond: via } of adj.get(cur) ?? []) {
+        if (via === bond) continue; // the bond under test is removed
+        if (to === bond.atom2) { reached = true; break; }
+        if (!seen.has(to)) { seen.add(to); stack.push(to); }
+      }
+    }
+    if (reached) inRing.add(bond);
+  }
+  return inRing;
+}
+
+/** Number of connected components of the structure graph. */
+function componentCount(atoms: ChemAtom[], bonds: ChemBond[]): number {
+  const adj = adjacency(atoms, bonds);
+  const seen = new Set<number>();
+  let components = 0;
+  for (const a of atoms) {
+    if (seen.has(a.id)) continue;
+    components++;
+    const stack = [a.id];
+    seen.add(a.id);
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      for (const { to } of adj.get(cur) ?? []) {
+        if (!seen.has(to)) { seen.add(to); stack.push(to); }
+      }
+    }
+  }
+  return components;
+}
+
+/**
+ * Functional groups read off the structure graph. Purely descriptive: each
+ * entry says what was found, with no liability or toxicity interpretation.
+ * Detection is by local connectivity, so it is order-independent — unlike
+ * matching substrings against the SMILES text, where the same molecule written
+ * two ways gives two different answers.
+ */
+function detectFunctionalGroups(atoms: ChemAtom[], bonds: ChemBond[]): string[] {
+  const adj = adjacency(atoms, bonds);
+  const at = (id: number) => atoms[id];
+  const nbrs = (id: number) => adj.get(id) ?? [];
+  const found = new Set<string>();
+
+  for (const atom of atoms) {
+    const sym = atom.symbol;
+    const links = nbrs(atom.id);
+
+    if (sym === "C") {
+      const doubleO = links.filter((l) => l.bond.order === 2 && at(l.to).symbol === "O");
+      const singleO = links.filter((l) => l.bond.order === 1 && at(l.to).symbol === "O");
+      const singleN = links.filter((l) => l.bond.order === 1 && at(l.to).symbol === "N");
+      const carbons = links.filter((l) => at(l.to).symbol === "C");
+      const tripleN = links.filter((l) => l.bond.order === 3 && at(l.to).symbol === "N");
+
+      if (tripleN.length > 0) found.add("Nitrile (C≡N)");
+      if (doubleO.length === 1) {
+        const hydroxyl = singleO.find((l) => at(l.to).implicitHydrogens > 0);
+        const etherO = singleO.find((l) => at(l.to).implicitHydrogens === 0 && nbrs(l.to).length > 1);
+        if (hydroxyl) found.add("Carboxylic acid (COOH)");
+        else if (etherO) found.add("Ester (C(=O)O-C)");
+        else if (singleN.length > 0) found.add("Amide (C(=O)N)");
+        else if (atom.implicitHydrogens > 0) found.add("Aldehyde (CHO)");
+        else if (carbons.length >= 2) found.add("Ketone (C(=O)C)");
+      }
+    }
+
+    if (sym === "N") {
+      const oxygens = links.filter((l) => at(l.to).symbol === "O");
+      if (oxygens.length >= 2 && oxygens.some((l) => l.bond.order === 2)) found.add("Nitro (NO₂)");
+      if (links.some((l) => l.bond.order === 2 && at(l.to).symbol === "N")) found.add("Azo (N=N)");
+      if (links.some((l) => l.bond.order === 1 && at(l.to).symbol === "N")) found.add("Hydrazine-type (N-N)");
+      if (!atom.isAromatic && atom.implicitHydrogens === 2) found.add("Primary amine (NH₂)");
+    }
+
+    if (sym === "O" && atom.implicitHydrogens > 0) {
+      // Hydroxyl only when not part of a carboxylic acid.
+      const onAcidCarbon = links.some((l) =>
+        at(l.to).symbol === "C" && nbrs(l.to).some((m) => m.bond.order === 2 && at(m.to).symbol === "O")
+      );
+      if (!onAcidCarbon) found.add(atom.isAromatic || links.some((l) => at(l.to).isAromatic) ? "Phenol (aromatic OH)" : "Hydroxyl (OH)");
+    }
+
+    if (sym === "S") {
+      const oxygens = links.filter((l) => l.bond.order === 2 && at(l.to).symbol === "O");
+      const nitrogens = links.filter((l) => at(l.to).symbol === "N");
+      if (oxygens.length >= 2 && nitrogens.length > 0) found.add("Sulfonamide (SO₂N)");
+      else if (oxygens.length >= 2) found.add("Sulfone / sulfonyl (SO₂)");
+      else if (atom.implicitHydrogens > 0) found.add("Thiol (SH)");
+      if (links.some((l) => l.bond.order === 2 && at(l.to).symbol === "C")) found.add("Thiocarbonyl (C=S)");
+    }
+
+    if (HALOGENS.has(sym)) {
+      const pretty = sym.charAt(0) + sym.slice(1).toLowerCase();
+      found.add(`Halogen substituent (${pretty})`);
+    }
+  }
+
+  return [...found].sort();
+}
+
+/**
+ * Compute properties from a SMILES string.
+ *
+ * Throws when the structure cannot be parsed. It deliberately does not fall
+ * back to placeholder values: a caller that cannot tell a failure from a real
+ * measurement would report invented numbers as data.
+ */
+export function calculateProperties(smiles: string): MolecularProperties {
+  const graph = parseSmiles(smiles);
+  const atoms = graph.atoms;
+  const bonds = graph.bonds;
+  if (atoms.length === 0) throw new Error("No atoms parsed from SMILES");
+
+  // --- Formula and mass -----------------------------------------------------
+  const atomCounts: Record<string, number> = { H: 0 };
+  let mw = 0;
+  for (const atom of atoms) {
+    atomCounts[atom.symbol] = (atomCounts[atom.symbol] ?? 0) + 1;
+    atomCounts.H += atom.implicitHydrogens;
+    mw += ATOMIC_MASSES[atom.symbol] ?? 12.011;
+  }
+  mw += atomCounts.H * ATOMIC_MASSES.H;
+
+  const listElements = Object.keys(atomCounts).filter((k) => atomCounts[k] > 0);
+  listElements.sort((a, b) => {
+    if (a === "C") return -1;
+    if (b === "C") return 1;
+    if (a === "H") return -1;
+    if (b === "H") return 1;
+    return a.localeCompare(b);
+  });
+  const formula = listElements.map((el) => (atomCounts[el] === 1 ? el : `${el}${atomCounts[el]}`)).join("");
+
+  // --- Hydrogen bonding (Lipinski's simple N+O counts) ----------------------
+  let hba = 0;
+  let hbd = 0;
+  for (const atom of atoms) {
+    if (atom.symbol !== "N" && atom.symbol !== "O") continue;
+    hba++;
+    if (atom.implicitHydrogens > 0) hbd++;
+  }
+
+  // --- Rings ----------------------------------------------------------------
+  // Cyclomatic number: edges - vertices + components.
+  const ring_count = Math.max(0, bonds.length - atoms.length + componentCount(atoms, bonds));
+  const aromaticAtomIds = atoms.filter((a) => a.isAromatic).map((a) => a.id);
+  let aromatic_rings = 0;
+  if (aromaticAtomIds.length >= 3) {
+    const aromaticAtomSet = new Set(aromaticAtomIds);
+    const aromaticBonds = bonds.filter((b) => aromaticAtomSet.has(b.atom1) && aromaticAtomSet.has(b.atom2));
+    const aromaticAtoms = atoms.filter((a) => aromaticAtomSet.has(a.id));
+    const cyclomatic = aromaticBonds.length - aromaticAtoms.length + componentCount(aromaticAtoms, aromaticBonds);
+    aromatic_rings = Math.max(0, cyclomatic);
+  }
+
+  // --- Rotatable bonds ------------------------------------------------------
+  // Acyclic single bonds between two non-terminal heavy atoms, excluding the
+  // amide C-N bond (restricted rotation). Ring bonds are excluded explicitly:
+  // counting them would make every cycloalkane look flexible.
+  const inRing = ringBonds(atoms, bonds);
+  const adj = adjacency(atoms, bonds);
+  const degree = (id: number) => (adj.get(id) ?? []).length;
+  const isAmideBond = (a: ChemAtom, b: ChemAtom): boolean => {
+    const [c, n] = a.symbol === "C" ? [a, b] : [b, a];
+    if (c.symbol !== "C" || n.symbol !== "N") return false;
+    return (adj.get(c.id) ?? []).some((l) => l.bond.order === 2 && atoms[l.to].symbol === "O");
+  };
+
+  let rotatable_bonds = 0;
+  for (const bond of bonds) {
+    if (bond.order !== 1 || inRing.has(bond)) continue;
+    const a1 = atoms[bond.atom1];
+    const a2 = atoms[bond.atom2];
+    if (degree(a1.id) <= 1 || degree(a2.id) <= 1) continue;
+    if (HALOGENS.has(a1.symbol) || HALOGENS.has(a2.symbol)) continue;
+    if (isAmideBond(a1, a2)) continue;
+    rotatable_bonds++;
+  }
+
+  // --- logP estimate and TPSA ----------------------------------------------
+  // TPSA uses Ertl et al. (2000) fragment contributions; the logP figure is a
+  // coarse atom-additive estimate and is named accordingly.
+  let logp_estimate = 0.5;
+  let tpsa = 0.0;
+  for (const atom of atoms) {
+    const sym = atom.symbol;
+    if (sym === "C") {
+      logp_estimate += atom.isAromatic ? 0.36 : 0.4;
+    } else if (sym === "O") {
+      if (atom.implicitHydrogens >= 1) {
+        tpsa += 20.23;
+        logp_estimate -= 0.6;
+      } else {
+        tpsa += 9.23;
+        logp_estimate -= 0.2;
+      }
+    } else if (sym === "N") {
+      if (atom.implicitHydrogens === 2) {
+        tpsa += 26.02;
+        logp_estimate -= 1.1;
+      } else if (atom.implicitHydrogens === 1) {
+        tpsa += 12.03;
+        logp_estimate -= 0.8;
+      } else {
+        tpsa += atom.isAromatic ? 12.89 : 3.24;
+        logp_estimate -= 0.5;
+      }
+    } else if (sym === "F") logp_estimate += 0.14;
+    else if (sym === "CL") logp_estimate += 0.55;
+    else if (sym === "BR") logp_estimate += 0.82;
+    else if (sym === "I") logp_estimate += 1.12;
+    else if (sym === "S") {
+      logp_estimate += 0.15;
+      tpsa += 25.3;
+    }
+  }
+
+  // --- Rule-based flags -----------------------------------------------------
+  const ro5_violations = sumB([mw > 500, logp_estimate > 5, hbd > 5, hba > 10]);
+  const veber_violations = sumB([rotatable_bonds > 10, tpsa > 140]);
+
+  // --- Composite indices (ranking aids, not published scores) ---------------
+  const desirability = (val: number, mean: number, sd: number) => Math.exp(-0.5 * Math.pow((val - mean) / sd, 2));
+  const desirability_index = Math.pow(
+    desirability(mw, 280, 120) *
+      desirability(logp_estimate, 2.5, 1.8) *
+      desirability(hba, 4.5, 2.5) *
+      desirability(hbd, 1.8, 1.5) *
+      desirability(tpsa, 75, 45) *
+      desirability(rotatable_bonds, 4, 3),
+    1 / 6
+  );
+
+  const heavyAtoms = atoms.length;
+  const complexity_index = Math.min(
+    10,
+    Math.max(1, 1 + heavyAtoms / 8 + ring_count * 0.3 + rotatable_bonds * 0.1)
+  );
+
+  return {
+    smiles,
+    formula,
+    mw: parseFloat(mw.toFixed(2)),
+    logp_estimate: parseFloat(logp_estimate.toFixed(2)),
+    tpsa: parseFloat(tpsa.toFixed(1)),
+    hbd,
+    hba,
+    rotatable_bonds,
+    aromatic_rings,
+    ring_count,
+    desirability_index: parseFloat(desirability_index.toFixed(3)),
+    complexity_index: parseFloat(complexity_index.toFixed(2)),
+    ro5_violations,
+    veber_violations,
+    functional_groups: detectFunctionalGroups(atoms, bonds),
+  };
 }
 
 function sumB(arr: boolean[]): number {

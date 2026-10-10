@@ -39,22 +39,6 @@ export function takePendingMetabolite(): string | null {
   return q;
 }
 
-/** A seed structure for the Molecule Designer (design analogs / compute properties). */
-export interface DesignSeed {
-  name: string;
-  smiles: string;
-}
-let pendingDesignSeed: DesignSeed | null = null;
-
-export function setPendingDesignSeed(seed: DesignSeed) {
-  pendingDesignSeed = seed;
-}
-export function takePendingDesignSeed(): DesignSeed | null {
-  const s = pendingDesignSeed;
-  pendingDesignSeed = null;
-  return s;
-}
-
 /** A pre-filled Lab Notebook entry; the student reviews it and picks the outcome. */
 export interface NotebookDraft {
   name: string;
@@ -73,4 +57,16 @@ export function takePendingNotebookDraft(): NotebookDraft | null {
   const d = pendingNotebookDraft;
   pendingNotebookDraft = null;
   return d;
+}
+
+/** A seed compound (name, CID or SMILES) to load in the analog search. */
+let pendingAnalogSeed: string | null = null;
+
+export function setPendingAnalogSeed(seed: string) {
+  pendingAnalogSeed = seed;
+}
+export function takePendingAnalogSeed(): string | null {
+  const s = pendingAnalogSeed;
+  pendingAnalogSeed = null;
+  return s;
 }

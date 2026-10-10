@@ -1,23 +1,36 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * A local record of what was looked up and what the user concluded. Entries are
+ * the user's own: nothing is written here automatically, and the list starts
+ * empty rather than seeded with an example result.
  */
 
 import React, { useEffect, useState } from "react";
-import { NotebookPen, Plus, Trash2, X } from "lucide-react";
-import { Panel, Button, Field, TextInput, Badge, EmptyState } from "../../components/ui";
+import { Box, Btn, Field, Text, Tag, Note, Empty, LinkBtn } from "../../components/ui";
 import { useExperiments, addExperiment, removeExperiment } from "./store";
 import { takePendingNotebookDraft } from "../../store/handoff";
 import type { ExperimentOutcome } from "../../types";
 
-const OUTCOMES: { value: ExperimentOutcome; label: string; tone: "green" | "amber" | "rose" | "slate" }[] = [
-  { value: "success", label: "Success", tone: "green" },
-  { value: "partial", label: "Partial", tone: "amber" },
-  { value: "failed", label: "Failed", tone: "rose" },
-  { value: "toxic", label: "Toxic", tone: "rose" },
+const OUTCOMES: { value: ExperimentOutcome; label: string }[] = [
+  { value: "success", label: "Supported" },
+  { value: "partial", label: "Partial" },
+  { value: "failed", label: "Not supported" },
+  { value: "toxic", label: "Flagged" },
 ];
 
-const toneFor = (o: ExperimentOutcome) => OUTCOMES.find((x) => x.value === o)?.tone || "slate";
+const toneFor = (o: ExperimentOutcome): "ok" | "warn" | "bad" =>
+  o === "success" ? "ok" : o === "partial" ? "warn" : "bad";
+
+function toCsv(rows: ReturnType<typeof useExperiments>): string {
+  const q = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = ["created_at", "name", "smiles", "assay", "result", "outcome", "notes"];
+  return [
+    head.join(","),
+    ...rows.map((e) => [q(e.createdAt), q(e.name), q(e.smiles), q(e.assay), q(e.resultValue), q(e.outcome), q(e.notes)].join(",")),
+  ].join("\n");
+}
 
 export default function LabNotebook() {
   const experiments = useExperiments();
@@ -30,96 +43,146 @@ export default function LabNotebook() {
   const [draftFrom, setDraftFrom] = useState("");
 
   useEffect(() => {
-    // An entry sent over from another feature: prefill it for review rather than saving blindly.
     const d = takePendingNotebookDraft();
     if (d) {
-      setName(d.name); setSmiles(d.smiles || ""); setAssay(d.assay || ""); setResultValue(d.resultValue || ""); setNotes(d.notes || "");
-      setDraftFrom(d.source || "another tool");
+      setName(d.name);
+      setSmiles(d.smiles || "");
+      setAssay(d.assay || "");
+      setResultValue(d.resultValue || "");
+      setNotes(d.notes || "");
+      setDraftFrom(d.source || "another page");
     }
   }, []);
 
   const reset = () => {
-    setName(""); setSmiles(""); setAssay(""); setResultValue(""); setNotes(""); setOutcome("success"); setDraftFrom("");
+    setName("");
+    setSmiles("");
+    setAssay("");
+    setResultValue("");
+    setNotes("");
+    setOutcome("success");
+    setDraftFrom("");
   };
 
   const save = () => {
     if (!name.trim()) return;
-    addExperiment({ name: name.trim(), smiles: smiles.trim(), assay: assay.trim() || "General assay", resultValue: resultValue.trim(), outcome, notes: notes.trim() });
+    addExperiment({
+      name: name.trim(),
+      smiles: smiles.trim(),
+      assay: assay.trim() || "Unspecified",
+      resultValue: resultValue.trim(),
+      outcome,
+      notes: notes.trim(),
+    });
     reset();
   };
 
-  return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-bold text-slate-800">
-          <NotebookPen className="h-5 w-5 text-[#0A355C]" /> Lab Notebook
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">Record experiment outcomes. Metabolite profiles can be sent here with one click.</p>
-      </div>
+  const exportCsv = () => {
+    const url = URL.createObjectURL(new Blob([toCsv(experiments)], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "chemtool-notebook.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        {/* Add form */}
-        <div className="lg:col-span-2">
-          <Panel title="Log an entry" icon={Plus}>
-            <div className="space-y-3">
-              {draftFrom && (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
-                  <span>Prefilled from {draftFrom} — review, pick an outcome, and save.</span>
-                  <button onClick={reset} title="Discard draft" className="rounded p-0.5 hover:bg-sky-100 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
-                </div>
-              )}
-              <Field label="Name / title"><TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 5-Methyl aspirin analog" /></Field>
-              <Field label="SMILES (optional)"><TextInput value={smiles} onChange={(e) => setSmiles(e.target.value)} className="font-mono" /></Field>
-              <Field label="Assay"><TextInput value={assay} onChange={(e) => setAssay(e.target.value)} placeholder="e.g. Solubility screen" /></Field>
-              <Field label="Result"><TextInput value={resultValue} onChange={(e) => setResultValue(e.target.value)} placeholder="e.g. 4.2 mg/mL" /></Field>
-              <Field label="Outcome">
-                <div className="flex flex-wrap gap-1.5">
-                  {OUTCOMES.map((o) => (
-                    <button
-                      key={o.value}
-                      onClick={() => setOutcome(o.value)}
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
-                        outcome === o.value ? "border-[#0A355C] bg-[#0A355C]/10 text-[#0A355C]" : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-              <Field label="Notes">
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-                  className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm outline-none focus:border-[#0A355C] focus:ring-2 focus:ring-[#0A355C]/10" />
-              </Field>
-              <Button icon={Plus} onClick={save} disabled={!name.trim()} className="w-full">Save entry</Button>
-            </div>
-          </Panel>
+  return (
+    <div>
+      <h2 className="title">Notebook</h2>
+      <p className="lede">
+        Your own record of queries run and conclusions drawn. Entries are stored in this browser
+        only — they are not uploaded anywhere, and clearing site data removes them. Export to CSV to
+        keep a copy.
+      </p>
+
+      <div className="cols">
+        <div className="col" style={{ flex: "1 1 280px" }}>
+          <Box title="Add entry">
+            {draftFrom && (
+              <Note kind="info" title={`Prefilled from ${draftFrom}`}>
+                Review it, choose an outcome, then save. <LinkBtn onClick={reset}>Discard</LinkBtn>
+              </Note>
+            )}
+            <Field label="Title">
+              <Text value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} />
+            </Field>
+            <Field label="Structure (SMILES, optional)">
+              <Text className="mono" value={smiles} onChange={(e) => setSmiles(e.target.value)} style={{ width: "100%" }} />
+            </Field>
+            <Field label="Method or query">
+              <Text value={assay} onChange={(e) => setAssay(e.target.value)} placeholder="e.g. PubChem similarity, threshold 90%" style={{ width: "100%" }} />
+            </Field>
+            <Field label="Result">
+              <Text value={resultValue} onChange={(e) => setResultValue(e.target.value)} style={{ width: "100%" }} />
+            </Field>
+            <Field label="Outcome">
+              <select value={outcome} onChange={(e) => setOutcome(e.target.value as ExperimentOutcome)}>
+                {OUTCOMES.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Notes">
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} style={{ width: "100%" }} />
+            </Field>
+            <Btn primary onClick={save} disabled={!name.trim()}>
+              Save entry
+            </Btn>
+          </Box>
         </div>
 
-        {/* Entries */}
-        <div className="space-y-3 lg:col-span-3">
-          {experiments.length === 0 ? (
-            <Panel><EmptyState icon={NotebookPen} title="No entries yet" hint="Log an experiment or send one over from a reaction or design." /></Panel>
-          ) : (
-            experiments.map((exp) => (
-              <Panel key={exp.id} className="animate-fadeIn">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="truncate text-sm font-semibold text-slate-800">{exp.name}</h3>
-                      <Badge tone={toneFor(exp.outcome)}>{exp.outcome}</Badge>
-                    </div>
-                    <div className="mt-0.5 text-xs text-slate-500">{exp.assay}{exp.resultValue ? ` · ${exp.resultValue}` : ""}</div>
-                  </div>
-                  <button onClick={() => removeExperiment(exp.id)} className="shrink-0 rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-                {exp.smiles && <code className="mt-2 block break-all rounded bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-600">{exp.smiles}</code>}
-                {exp.notes && <p className="mt-2 text-sm leading-relaxed text-slate-600">{exp.notes}</p>}
-              </Panel>
-            ))
-          )}
+        <div className="col" style={{ flex: "2 1 380px" }}>
+          <Box
+            title={`Entries (${experiments.length})`}
+            actions={experiments.length > 0 ? <LinkBtn onClick={exportCsv}>export CSV</LinkBtn> : null}
+            flush
+          >
+            {experiments.length === 0 ? (
+              <Empty title="No entries" hint="Saved entries appear here, newest first." />
+            ) : (
+              <div className="scroll-x">
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th scope="col">Date</th>
+                      <th scope="col">Title</th>
+                      <th scope="col">Method</th>
+                      <th scope="col">Result</th>
+                      <th scope="col">Outcome</th>
+                      <th scope="col" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {experiments.map((e) => (
+                      <tr key={e.id}>
+                        <td className="nowrap small">{new Date(e.createdAt).toISOString().slice(0, 10)}</td>
+                        <td>
+                          {e.name}
+                          {e.smiles && (
+                            <>
+                              <br />
+                              <code className="small">{e.smiles}</code>
+                            </>
+                          )}
+                          {e.notes && <div className="small muted">{e.notes}</div>}
+                        </td>
+                        <td>{e.assay}</td>
+                        <td>{e.resultValue || "—"}</td>
+                        <td>
+                          <Tag tone={toneFor(e.outcome)}>{e.outcome}</Tag>
+                        </td>
+                        <td>
+                          <LinkBtn onClick={() => removeExperiment(e.id)}>delete</LinkBtn>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Box>
         </div>
       </div>
     </div>
