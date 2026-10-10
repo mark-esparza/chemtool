@@ -11,7 +11,7 @@
     "test": "node --import tsx --test server/*.test.ts src/lib/*.test.ts src/features/*/*.test.ts"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=20.18.0"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.4",
