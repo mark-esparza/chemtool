@@ -482,15 +482,32 @@ export function calculateProperties(smiles: string): MolecularProperties {
     if (atom.implicitHydrogens > 0) hbd++;
   }
 
-  // --- Rings ----------------------------------------------------------------
+  // --- Rings and aromaticity ------------------------------------------------
+  const inRing = ringBonds(atoms, bonds);
+  const adj = adjacency(atoms, bonds);
+  const ringAtoms = new Set<number>();
+  for (const b of inRing) {
+    ringAtoms.add(b.atom1);
+    ringAtoms.add(b.atom2);
+  }
+
   // Cyclomatic number: edges - vertices + components.
   const ring_count = Math.max(0, bonds.length - atoms.length + componentCount(atoms, bonds));
-  const aromaticAtomIds = atoms.filter((a) => a.isAromatic).map((a) => a.id);
+
+  // Aromaticity. Lower-case SMILES marks it explicitly, but the same ring is
+  // just as often written in Kekule form (C1=CC=CC=C1), where the parser sees
+  // ordinary carbons. Treat a ring atom carrying a double bond to another ring
+  // atom as aromatic too, so benzene is recognised either way.
+  const isAromaticAtom = (a: ChemAtom): boolean => {
+    if (a.isAromatic) return true;
+    if (!ringAtoms.has(a.id)) return false;
+    return (adj.get(a.id) ?? []).some((l) => l.bond.order === 2 && ringAtoms.has(l.to) && inRing.has(l.bond));
+  };
+  const aromaticAtoms = atoms.filter(isAromaticAtom);
   let aromatic_rings = 0;
-  if (aromaticAtomIds.length >= 3) {
-    const aromaticAtomSet = new Set(aromaticAtomIds);
-    const aromaticBonds = bonds.filter((b) => aromaticAtomSet.has(b.atom1) && aromaticAtomSet.has(b.atom2));
-    const aromaticAtoms = atoms.filter((a) => aromaticAtomSet.has(a.id));
+  if (aromaticAtoms.length >= 3) {
+    const aromaticSet = new Set(aromaticAtoms.map((a) => a.id));
+    const aromaticBonds = bonds.filter((b) => aromaticSet.has(b.atom1) && aromaticSet.has(b.atom2));
     const cyclomatic = aromaticBonds.length - aromaticAtoms.length + componentCount(aromaticAtoms, aromaticBonds);
     aromatic_rings = Math.max(0, cyclomatic);
   }
@@ -499,8 +516,6 @@ export function calculateProperties(smiles: string): MolecularProperties {
   // Acyclic single bonds between two non-terminal heavy atoms, excluding the
   // amide C-N bond (restricted rotation). Ring bonds are excluded explicitly:
   // counting them would make every cycloalkane look flexible.
-  const inRing = ringBonds(atoms, bonds);
-  const adj = adjacency(atoms, bonds);
   const degree = (id: number) => (adj.get(id) ?? []).length;
   const isAmideBond = (a: ChemAtom, b: ChemAtom): boolean => {
     const [c, n] = a.symbol === "C" ? [a, b] : [b, a];
@@ -529,9 +544,16 @@ export function calculateProperties(smiles: string): MolecularProperties {
     if (sym === "C") {
       logp_estimate += atom.isAromatic ? 0.36 : 0.4;
     } else if (sym === "O") {
+      // Ertl's three oxygen environments differ: hydroxyl 20.23, carbonyl
+      // (double-bonded) 17.07, ether 9.23. Collapsing the first two into the
+      // ether value understates TPSA for every carbonyl-bearing compound.
+      const isCarbonyl = (adj.get(atom.id) ?? []).some((l) => l.bond.order === 2);
       if (atom.implicitHydrogens >= 1) {
         tpsa += 20.23;
         logp_estimate -= 0.6;
+      } else if (isCarbonyl) {
+        tpsa += 17.07;
+        logp_estimate -= 0.2;
       } else {
         tpsa += 9.23;
         logp_estimate -= 0.2;
@@ -544,7 +566,7 @@ export function calculateProperties(smiles: string): MolecularProperties {
         tpsa += 12.03;
         logp_estimate -= 0.8;
       } else {
-        tpsa += atom.isAromatic ? 12.89 : 3.24;
+        tpsa += isAromaticAtom(atom) ? 12.89 : 3.24;
         logp_estimate -= 0.5;
       }
     } else if (sym === "F") logp_estimate += 0.14;

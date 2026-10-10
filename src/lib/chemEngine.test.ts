@@ -73,10 +73,28 @@ test("functional groups are read from connectivity, not from the SMILES text", (
   assert.ok(dopamine.includes("Phenol (aromatic OH)"), dopamine.join("|"));
 });
 
-test("TPSA follows Ertl fragment contributions", () => {
+test("TPSA follows Ertl fragment contributions, including carbonyl oxygen", () => {
   // Glucose: five hydroxyls (20.23 each) plus one ring ether (9.23) = 110.38.
   assert.ok(Math.abs(calculateProperties(GLUCOSE).tpsa - 110.4) < 0.5);
   assert.equal(calculateProperties(BENZENE).tpsa, 0);
+
+  // Aspirin: acid OH 20.23 + acid C=O 17.07 + ester -O- 9.23 + ester C=O 17.07
+  // = 63.60, which is the value PubChem publishes for CID 2244. Treating the
+  // carbonyl oxygens as ethers gave 47.9.
+  assert.ok(Math.abs(calculateProperties(ASPIRIN).tpsa - 63.6) < 0.1, `got ${calculateProperties(ASPIRIN).tpsa}`);
+  // Paracetamol (CID 1983, PubChem TPSA 49.3): amide C=O 17.07 + NH 12.03 + OH 20.23.
+  assert.ok(Math.abs(calculateProperties("CC(=O)Nc1ccc(O)cc1").tpsa - 49.3) < 0.1);
+});
+
+test("aromatic rings are recognised in Kekule notation, not just lower-case SMILES", () => {
+  // The same ring written both ways must give the same count.
+  assert.equal(calculateProperties("C1=CC=CC=C1").aromatic_rings, 1); // Kekule benzene
+  assert.equal(calculateProperties(BENZENE).aromatic_rings, 1); // lower-case benzene
+  assert.equal(calculateProperties(ASPIRIN).aromatic_rings, 1); // Kekule ring on a side chain
+  assert.equal(calculateProperties("C1=CC2=CC=CC=C2C=C1").aromatic_rings, 2); // naphthalene
+  // Non-aromatic rings must not be swept in by the double-bond rule.
+  assert.equal(calculateProperties(CYCLOHEXANE).aromatic_rings, 0);
+  assert.equal(calculateProperties("C1CCCC=C1").aromatic_rings, 0); // cyclohexene
 });
 
 test("hydrogen-bond counts use Lipinski's N+O convention", () => {
