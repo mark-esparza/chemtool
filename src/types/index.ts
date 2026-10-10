@@ -80,6 +80,8 @@ export interface PubChemCompound {
   descriptionSource: string;
   descriptionUrl?: string;
   synonyms: string[];
+  /** HMDB accession when PubChem cross-references this compound as a human metabolite. */
+  hmdbAccession: string | null;
   reportUrl: string;
   websiteReportEmbed: string;
 }
@@ -130,7 +132,7 @@ export interface ProductBreakdown {
 }
 
 // ---------------------------------------------------------------------------
-// HMDB metabolite (as returned by /api/hmdb/search)
+// HMDB metabolite (as returned by /api/hmdb/search and /api/hmdb/batch)
 // ---------------------------------------------------------------------------
 export interface HmdbConcentration {
   biospecimen: string;
@@ -139,23 +141,66 @@ export interface HmdbConcentration {
   condition?: string;
 }
 
+export interface HmdbPathway {
+  name: string;
+  smpdbId: string | null;
+  keggMapId: string | null;
+}
+
+/** An enzyme, transporter, or other protein that acts on the metabolite. */
+export interface HmdbProtein {
+  name: string;
+  gene: string | null;
+  type: string | null;
+  uniprotId: string | null;
+}
+
+export interface HmdbClassification {
+  directParent: string | null;
+  superClass: string | null;
+  class: string | null;
+  subClass: string | null;
+}
+
+/** Identifiers that link the metabolite to other databases (and back into the app). */
+export interface HmdbXrefs {
+  pubchemCid: number | null;
+  keggId: string | null;
+  chebiId: string | null;
+  drugbankId: string | null;
+}
+
 export interface HmdbMetabolite {
   accession: string;
   name: string;
   formula: string | null;
   averageMass: number | null;
+  monoisotopicMass: number | null;
   iupacName: string | null;
   smiles: string | null;
   inchikey: string | null;
+  casNumber: string | null;
   state: string | null;
   description: string | null;
+  synonyms: string[];
+  classification: HmdbClassification | null;
   biospecimens: string[];
   tissues: string[];
-  pathways: string[];
+  cellularLocations: string[];
+  pathways: HmdbPathway[];
   diseases: string[];
+  proteins: HmdbProtein[];
   concentrations: HmdbConcentration[];
+  xrefs: HmdbXrefs;
   url: string;
   structureImage: string;
+}
+
+export interface HmdbBatchResult {
+  query: string;
+  success: boolean;
+  data?: HmdbMetabolite;
+  error?: string;
 }
 
 export interface ResolvedReactant {

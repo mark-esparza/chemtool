@@ -4,10 +4,13 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { Search, ExternalLink } from "lucide-react";
+import { Search, ExternalLink, Dna, Plus, Check, FlaskConical } from "lucide-react";
 import { Panel, Button, TextInput, Badge, Chip, Spinner, ErrorNote, StatTile, EmptyState } from "../../components/ui";
 import { searchCompound } from "../../api/client";
-import { takePendingCompound } from "../../store/handoff";
+import { takePendingCompound, setPendingReactants } from "../../store/handoff";
+import { navigate } from "../../store/nav";
+import { useBank, addToBank } from "../bank/store";
+import { openMetabolite } from "../metabolites/actions";
 import type { PubChemCompound } from "../../types";
 
 const EXAMPLES = ["Aspirin", "Caffeine", "Glucose", "Ethanol", "Meloxicam", "Benzene"];
@@ -17,6 +20,16 @@ export default function CompoundSearch() {
   const [result, setResult] = useState<PubChemCompound | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const bank = useBank();
+  const banked = !!result && bank.some((c) => c.cid === result.cid);
+
+  const bankIt = () => {
+    if (!result?.formula) return;
+    addToBank({
+      id: String(result.cid), name: result.name, formula: result.formula, smiles: result.smiles || undefined,
+      cid: result.cid, mw: result.mw, source: "Compound Search", hmdb: result.hmdbAccession || undefined,
+    });
+  };
 
   const run = async (q = query) => {
     if (!q.trim()) return;
@@ -99,9 +112,10 @@ export default function CompoundSearch() {
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h2 className="truncate text-lg font-bold text-slate-800">{result.name}</h2>
                     <Badge tone="blue">CID {result.cid}</Badge>
+                    {result.hmdbAccession && <Badge tone="green" icon={Dna}>Human metabolite</Badge>}
                   </div>
                   {result.iupac_name && <p className="mt-0.5 break-words text-xs text-slate-500">{result.iupac_name}</p>}
                 </div>
@@ -126,6 +140,20 @@ export default function CompoundSearch() {
                   <code className="block break-all font-mono text-xs text-slate-700">{result.smiles}</code>
                 </div>
               )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant={banked ? "secondary" : "primary"} icon={banked ? Check : Plus} onClick={bankIt} disabled={!result.formula || banked}>
+                  {banked ? "In bank" : "Add to bank"}
+                </Button>
+                {result.formula && (
+                  <Button variant="secondary" icon={FlaskConical} onClick={() => { setPendingReactants([result.formula]); navigate("reactions"); }}>React</Button>
+                )}
+                {result.hmdbAccession && (
+                  <Button variant="secondary" icon={Dna} onClick={() => openMetabolite(result.hmdbAccession!)}>
+                    Body chemistry ({result.hmdbAccession})
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 

@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from "react";
-import { Sparkles, TrendingUp, FileText, FlaskConical, Beaker, Plus, Eye, Layers, ShieldAlert, Download, Copy, Check, ListFilter } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Sparkles, TrendingUp, FileText, FlaskConical, Beaker, Plus, Eye, Layers, ShieldAlert, Download, Copy, Check, ListFilter, Dna, X } from "lucide-react";
 import { Panel, Button, Field, TextInput, Badge, Chip, Spinner, ErrorNote, StatTile, EmptyState } from "../../components/ui";
 import { Markdown } from "../../components/ui/Markdown";
 import StructureRenderer from "../../components/StructureRenderer";
 import { runDesignPipeline, evaluateSmiles, DesignResult } from "../../api/client";
 import { addToBank } from "../bank/store";
+import { takePendingDesignSeed, DesignSeed } from "../../store/handoff";
 import type { Candidate, MolecularProperties } from "../../types";
 
 const PRESETS = [
@@ -72,11 +73,14 @@ export default function MoleculeDesigner() {
   const [calc, setCalc] = useState<MolecularProperties | null>(null);
   const [calcErr, setCalcErr] = useState("");
 
+  // Explicit seed scaffold handed over from another feature (e.g. a metabolite).
+  const [seed, setSeed] = useState<DesignSeed | null>(null);
+
   const run = async () => {
     if (!prompt.trim()) return;
     setLoading(true); setError(""); setSafety(""); setResult(null); setActive(null);
     try {
-      const r = await runDesignPipeline(prompt, numSamples, []);
+      const r = await runDesignPipeline(prompt, numSamples, [], seed?.smiles);
       setResult(r);
       setActive(r.candidates[0] || null);
     } catch (e: any) {
@@ -87,15 +91,27 @@ export default function MoleculeDesigner() {
     }
   };
 
-  const evaluate = async () => {
-    if (!smiles.trim()) return;
+  const evaluate = async (s = smiles) => {
+    if (!s.trim()) return;
     setCalcErr(""); setCalc(null);
     try {
-      setCalc(await evaluateSmiles(smiles.trim()));
+      setCalc(await evaluateSmiles(s.trim()));
     } catch (e: any) {
       setCalcErr(e?.message || "Invalid SMILES.");
     }
   };
+
+  useEffect(() => {
+    // A structure sent over from Metabolites: seed the design and profile it right away.
+    const pending = takePendingDesignSeed();
+    if (pending) {
+      setSeed(pending);
+      setPrompt(`Design analogs of ${pending.name} with balanced drug-like properties.`);
+      setSmiles(pending.smiles);
+      evaluate(pending.smiles);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const ranked = useMemo(() => {
     if (!result) return [] as { c: Candidate; score: number }[];
@@ -140,6 +156,15 @@ export default function MoleculeDesigner() {
       </div>
 
       <Panel>
+        {seed && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <Dna className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              Seed scaffold: <span className="font-semibold">{seed.name}</span> <code className="ml-1 font-mono text-[11px] text-emerald-700">{seed.smiles}</code>
+            </span>
+            <button onClick={() => setSeed(null)} title="Clear seed — infer it from the goal instead" className="rounded p-0.5 hover:bg-emerald-100 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
         <Field label="Design goal">
           <textarea
             value={prompt}
@@ -313,7 +338,7 @@ export default function MoleculeDesigner() {
         <p className="mb-3 text-xs text-slate-500">Paste any SMILES to compute molecular properties instantly (on-device).</p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <TextInput value={smiles} onChange={(e) => setSmiles(e.target.value)} onKeyDown={(e) => e.key === "Enter" && evaluate()} className="flex-1 font-mono" placeholder="e.g. CC(=O)OC1=CC=CC=C1C(=O)O" />
-          <Button variant="secondary" onClick={evaluate} disabled={!smiles.trim()}>Calculate</Button>
+          <Button variant="secondary" onClick={() => evaluate()} disabled={!smiles.trim()}>Calculate</Button>
         </div>
         {calcErr && <div className="mt-2"><ErrorNote>{calcErr}</ErrorNote></div>}
         {calc && (

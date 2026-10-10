@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
-import { NotebookPen, Plus, Trash2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { NotebookPen, Plus, Trash2, X } from "lucide-react";
 import { Panel, Button, Field, TextInput, Badge, EmptyState } from "../../components/ui";
 import { useExperiments, addExperiment, removeExperiment } from "./store";
+import { takePendingNotebookDraft } from "../../store/handoff";
 import type { ExperimentOutcome } from "../../types";
 
 const OUTCOMES: { value: ExperimentOutcome; label: string; tone: "green" | "amber" | "rose" | "slate" }[] = [
@@ -26,11 +27,25 @@ export default function LabNotebook() {
   const [resultValue, setResultValue] = useState("");
   const [outcome, setOutcome] = useState<ExperimentOutcome>("success");
   const [notes, setNotes] = useState("");
+  const [draftFrom, setDraftFrom] = useState("");
+
+  useEffect(() => {
+    // An entry sent over from another feature: prefill it for review rather than saving blindly.
+    const d = takePendingNotebookDraft();
+    if (d) {
+      setName(d.name); setSmiles(d.smiles || ""); setAssay(d.assay || ""); setResultValue(d.resultValue || ""); setNotes(d.notes || "");
+      setDraftFrom(d.source || "another tool");
+    }
+  }, []);
+
+  const reset = () => {
+    setName(""); setSmiles(""); setAssay(""); setResultValue(""); setNotes(""); setOutcome("success"); setDraftFrom("");
+  };
 
   const save = () => {
     if (!name.trim()) return;
     addExperiment({ name: name.trim(), smiles: smiles.trim(), assay: assay.trim() || "General assay", resultValue: resultValue.trim(), outcome, notes: notes.trim() });
-    setName(""); setSmiles(""); setAssay(""); setResultValue(""); setNotes(""); setOutcome("success");
+    reset();
   };
 
   return (
@@ -39,7 +54,7 @@ export default function LabNotebook() {
         <h1 className="flex items-center gap-2 text-xl font-bold text-slate-800">
           <NotebookPen className="h-5 w-5 text-[#0A355C]" /> Lab Notebook
         </h1>
-        <p className="mt-1 text-sm text-slate-500">Record experiment outcomes. Reactions and designs can be logged here with one click.</p>
+        <p className="mt-1 text-sm text-slate-500">Record experiment outcomes. Metabolite profiles can be sent here with one click.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
@@ -47,6 +62,12 @@ export default function LabNotebook() {
         <div className="lg:col-span-2">
           <Panel title="Log an entry" icon={Plus}>
             <div className="space-y-3">
+              {draftFrom && (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                  <span>Prefilled from {draftFrom} — review, pick an outcome, and save.</span>
+                  <button onClick={reset} title="Discard draft" className="rounded p-0.5 hover:bg-sky-100 cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                </div>
+              )}
               <Field label="Name / title"><TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 5-Methyl aspirin analog" /></Field>
               <Field label="SMILES (optional)"><TextInput value={smiles} onChange={(e) => setSmiles(e.target.value)} className="font-mono" /></Field>
               <Field label="Assay"><TextInput value={assay} onChange={(e) => setAssay(e.target.value)} placeholder="e.g. Solubility screen" /></Field>

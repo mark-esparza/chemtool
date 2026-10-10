@@ -25,7 +25,8 @@ const ORGANIC: Step[] = [
 const BIOCHEM: Step[] = [
   { title: "Frame it as a network, not one flask", body: "Ask systems questions: what accumulates if enzyme X is inhibited? which reaction is the bottleneck? aerobic vs anaerobic?" },
   { title: "Anchor on the metabolite", body: "Pull a metabolite's biofluid locations, normal concentrations, associated diseases, and the pathways it sits in.", inApp: { label: "Metabolites (HMDB)", view: "metabolites" } },
-  { title: "Model the pathway", body: "Simulate the reaction network — steady state, ODE dynamics, or flux balance — to find control points and predicted responses." },
+  { title: "Model the pathway", body: "Pick one of its pathways and the enzymes that act on it, then simulate the reaction network — steady state, ODE dynamics, or flux balance — to find control points and predicted responses.", inApp: { label: "Pathways & enzymes", view: "metabolites" } },
+  { title: "Bridge back to chemistry", body: "Seed the Molecule Designer with the metabolite's structure to enumerate substrate mimics or analogs, or send it to the Reaction Simulator.", inApp: { label: "Molecule Designer", view: "designer" } },
   { title: "Interpret as control points", body: "The useful result isn't \"this works,\" it's \"this enzyme is a strong control point\" or \"these analogs are chemically plausible.\"" },
 ];
 

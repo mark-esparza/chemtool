@@ -7,7 +7,7 @@
  */
 
 import { Router } from "express";
-import { calculateProperties, calculateTanimotoDistance, MolecularProperties } from "../../src/lib/chemEngine.js";
+import { calculateProperties, calculateTanimotoDistance, smilesToFormula, MolecularProperties } from "../../src/lib/chemEngine.js";
 import type { DesignBrief } from "../../src/types/index.js";
 import { isInputSafe } from "../safety.js";
 import { getParetoFrontMask } from "../pareto.js";
@@ -18,9 +18,23 @@ const router = Router();
 
 router.post("/api/design-pipeline", async (req, res) => {
   try {
-    const { prompt, numSamples = 15 } = req.body;
+    const { prompt, numSamples = 15, seedSmiles } = req.body;
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: "Missing or invalid prompt parameter." });
+    }
+    // Optional explicit seed scaffold (e.g. a metabolite handed over from the
+    // Metabolites explorer), which overrides the seed inferred from the prompt.
+    let explicitSeed: string | null = null;
+    if (seedSmiles !== undefined && seedSmiles !== null && seedSmiles !== "") {
+      if (typeof seedSmiles !== "string" || seedSmiles.length > 400 || /\s/.test(seedSmiles.trim())) {
+        return res.status(400).json({ error: "Invalid seedSmiles parameter." });
+      }
+      try {
+        smilesToFormula(seedSmiles.trim());
+      } catch {
+        return res.status(400).json({ error: "The seed structure is not a SMILES string the design engine can parse." });
+      }
+      explicitSeed = seedSmiles.trim();
     }
 
     // Step 1: Input safety check.
@@ -31,6 +45,10 @@ router.post("/api/design-pipeline", async (req, res) => {
 
     // Step 2: Compile the goal into a strict design brief (deterministic).
     const brief: DesignBrief = getLocalBriefFallback(prompt);
+    if (explicitSeed) {
+      brief.seed_smiles = explicitSeed;
+      brief.objective_summary = `Design analogs around the supplied seed scaffold: ${explicitSeed}`;
+    }
 
     // Step 3: Enumerate analogs around the seed scaffold (deterministic).
     const seedStructure = brief.seed_smiles || "CC(=O)OC1=CC=CC=C1C(=O)O";

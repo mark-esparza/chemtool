@@ -100,7 +100,7 @@ export default function App() {
         </nav>
 
         <div className="border-t border-slate-100 px-5 py-3 text-[11px] text-slate-400">
-          Deterministic · on-device · live PubChem
+          Deterministic · on-device · live PubChem &amp; HMDB
         </div>
       </aside>
 

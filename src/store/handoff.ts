@@ -26,3 +26,51 @@ export function takePendingCompound(): string | null {
   pendingCompound = null;
   return q;
 }
+
+/** A metabolite name or HMDB accession to open in the Metabolites explorer. */
+let pendingMetabolite: string | null = null;
+
+export function setPendingMetabolite(query: string) {
+  pendingMetabolite = query;
+}
+export function takePendingMetabolite(): string | null {
+  const q = pendingMetabolite;
+  pendingMetabolite = null;
+  return q;
+}
+
+/** A seed structure for the Molecule Designer (design analogs / compute properties). */
+export interface DesignSeed {
+  name: string;
+  smiles: string;
+}
+let pendingDesignSeed: DesignSeed | null = null;
+
+export function setPendingDesignSeed(seed: DesignSeed) {
+  pendingDesignSeed = seed;
+}
+export function takePendingDesignSeed(): DesignSeed | null {
+  const s = pendingDesignSeed;
+  pendingDesignSeed = null;
+  return s;
+}
+
+/** A pre-filled Lab Notebook entry; the student reviews it and picks the outcome. */
+export interface NotebookDraft {
+  name: string;
+  smiles?: string;
+  assay?: string;
+  resultValue?: string;
+  notes?: string;
+  source?: string;
+}
+let pendingNotebookDraft: NotebookDraft | null = null;
+
+export function setPendingNotebookDraft(draft: NotebookDraft) {
+  pendingNotebookDraft = draft;
+}
+export function takePendingNotebookDraft(): NotebookDraft | null {
+  const d = pendingNotebookDraft;
+  pendingNotebookDraft = null;
+  return d;
+}

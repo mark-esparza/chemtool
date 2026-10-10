@@ -4,13 +4,14 @@
  */
 
 import React, { useState } from "react";
-import { PackageSearch, Plus, Check, Loader2, X, FlaskConical, Search as SearchIcon, Beaker, Trash2, ExternalLink } from "lucide-react";
+import { PackageSearch, Plus, Check, Loader2, X, FlaskConical, Search as SearchIcon, Beaker, Trash2, ExternalLink, Dna } from "lucide-react";
 import { Panel, Button, TextInput, Badge, Chip, Spinner, ErrorNote, EmptyState } from "../../components/ui";
 import { searchProduct, searchCompound } from "../../api/client";
 import type { ProductBreakdown as Breakdown } from "../../types";
 import { useBank, addToBank, removeFromBank, clearBank, BankChemical } from "../bank/store";
 import { setPendingReactants, setPendingCompound } from "../../store/handoff";
 import { navigate } from "../../store/nav";
+import { openMetabolite } from "../metabolites/actions";
 
 const EXAMPLES = ["Coca-Cola", "Nutella", "Colgate toothpaste", "Advil", "Windex", "Oreo"];
 
@@ -22,6 +23,8 @@ export default function ProductBreakdown() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<Record<string, Status>>({});
+  // Ingredients PubChem cross-references to HMDB, i.e. chemicals the body also makes or carries.
+  const [metabolites, setMetabolites] = useState<Record<string, string>>({});
   const [addingAll, setAddingAll] = useState(false);
 
   const bank = useBank();
@@ -29,7 +32,7 @@ export default function ProductBreakdown() {
 
   const run = async (q = query) => {
     if (!q.trim()) return;
-    setLoading(true); setError(""); setResult(null); setStatus({});
+    setLoading(true); setError(""); setResult(null); setStatus({}); setMetabolites({});
     try {
       setResult(await searchProduct(q.trim()));
     } catch (e: any) {
@@ -51,8 +54,10 @@ export default function ProductBreakdown() {
         cid: c.cid,
         mw: c.mw,
         source: result?.product.name,
+        hmdb: c.hmdbAccession || undefined,
       };
       addToBank(chem);
+      if (c.hmdbAccession) setMetabolites((m) => ({ ...m, [name]: c.hmdbAccession! }));
       setStatus((s) => ({ ...s, [name]: "added" }));
       return true;
     } catch {
@@ -153,6 +158,12 @@ export default function ProductBreakdown() {
                       <div className="min-w-0">
                         <span className="text-sm text-slate-700">{ing.name}</span>
                         {ing.percent != null && <span className="ml-2 text-xs text-slate-400">{ing.percent}%</span>}
+                        {metabolites[ing.name] && (
+                          <button onClick={() => openMetabolite(metabolites[ing.name])} title="Also a human metabolite — open in Metabolites"
+                            className="ml-2 inline-flex items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-medium text-emerald-700 hover:bg-emerald-100 cursor-pointer">
+                            <Dna className="h-2.5 w-2.5" /> in body
+                          </button>
+                        )}
                       </div>
                       {st === "added" ? (
                         <span className="flex items-center gap-1 text-xs font-medium text-emerald-600"><Check className="h-3.5 w-3.5" /> Added</span>
@@ -200,6 +211,8 @@ export default function ProductBreakdown() {
                         <div className="truncate text-sm font-medium text-slate-800">{c.name}</div>
                         <div className="font-mono text-[11px] text-slate-400">{c.formula}</div>
                       </div>
+                      <button onClick={() => openMetabolite(c.hmdb || c.name)} title={c.hmdb ? `Human metabolite ${c.hmdb} — open in Metabolites` : "Look up in Metabolites (HMDB)"}
+                        className={`rounded p-1 hover:bg-emerald-50 hover:text-emerald-700 cursor-pointer ${c.hmdb ? "text-emerald-600" : "text-slate-400"}`}><Dna className="h-3.5 w-3.5" /></button>
                       <button onClick={() => analyze(c)} title="Analyze in Compound Search" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-[#0A355C] cursor-pointer"><SearchIcon className="h-3.5 w-3.5" /></button>
                       <button onClick={() => removeFromBank(c.id)} title="Remove" className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>

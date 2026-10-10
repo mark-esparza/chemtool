@@ -18,6 +18,7 @@ export interface BankChemical {
   cid?: number;
   mw?: number | string;
   source?: string; // e.g. the product it came from
+  hmdb?: string; // HMDB accession when it's a known human metabolite
 }
 
 const KEY = "chemstudio_bank";
@@ -44,14 +45,45 @@ function persist() {
   listeners.forEach((l) => l());
 }
 
-/** Add a chemical, de-duplicated by CID (or name). Returns true if newly added. */
+/** True when two bank entries are the same chemical (same CID, HMDB ID, or name). */
+function sameChemical(a: BankChemical, b: BankChemical): boolean {
+  if (a.cid && b.cid) return a.cid === b.cid;
+  if (a.hmdb && b.hmdb) return a.hmdb === b.hmdb;
+  return a.name.toLowerCase() === b.name.toLowerCase();
+}
+
+/**
+ * Add a chemical, de-duplicated by CID, HMDB accession, or name. If it's already
+ * banked, any identifiers the existing entry lacks (CID, SMILES, HMDB ID, mass)
+ * are merged in so cross-links light up. Returns true if newly added.
+ */
 export function addToBank(chem: BankChemical): boolean {
-  const key = chem.cid ? `cid:${chem.cid}` : `name:${chem.name.toLowerCase()}`;
-  const exists = bank.some((c) => (c.cid ? `cid:${c.cid}` : `name:${c.name.toLowerCase()}`) === key);
-  if (exists) return false;
+  const idx = bank.findIndex((c) => sameChemical(c, chem));
+  if (idx >= 0) {
+    const cur = bank[idx];
+    const merged: BankChemical = {
+      ...cur,
+      cid: cur.cid ?? chem.cid,
+      smiles: cur.smiles ?? chem.smiles,
+      hmdb: cur.hmdb ?? chem.hmdb,
+      mw: cur.mw ?? chem.mw,
+    };
+    if (merged.cid !== cur.cid || merged.smiles !== cur.smiles || merged.hmdb !== cur.hmdb || merged.mw !== cur.mw) {
+      bank = bank.map((c, i) => (i === idx ? merged : c));
+      persist();
+    }
+    return false;
+  }
   bank = [...bank, chem];
   persist();
   return true;
+}
+
+/** Record that a banked chemical is (or is not) a known human metabolite. */
+export function setBankHmdb(id: string, hmdb: string | undefined) {
+  if (!bank.some((c) => c.id === id && c.hmdb !== hmdb)) return;
+  bank = bank.map((c) => (c.id === id ? { ...c, hmdb } : c));
+  persist();
 }
 
 export function removeFromBank(id: string) {
@@ -62,6 +94,11 @@ export function removeFromBank(id: string) {
 export function clearBank() {
   bank = [];
   persist();
+}
+
+/** Current bank contents, for non-React callers. */
+export function getBank(): BankChemical[] {
+  return bank;
 }
 
 export function useBank(): BankChemical[] {

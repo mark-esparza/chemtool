@@ -16,6 +16,7 @@ import type {
   Experiment,
   ProductBreakdown,
   HmdbMetabolite,
+  HmdbBatchResult,
 } from "../types";
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -63,6 +64,10 @@ export async function searchMetabolite(query: string): Promise<HmdbMetabolite> {
   return data as HmdbMetabolite;
 }
 
+export function batchMetabolites(queries: string[]): Promise<{ results: HmdbBatchResult[] }> {
+  return postJson<{ results: HmdbBatchResult[] }>("/api/hmdb/batch", { queries });
+}
+
 export function evaluateSmiles(smiles: string): Promise<MolecularProperties> {
   return postJson<MolecularProperties>("/api/evaluate", { smiles });
 }
@@ -78,7 +83,8 @@ export interface DesignResult {
 export function runDesignPipeline(
   prompt: string,
   numSamples: number,
-  experiments: Experiment[]
+  experiments: Experiment[],
+  seedSmiles?: string
 ): Promise<DesignResult> {
-  return postJson<DesignResult>("/api/design-pipeline", { prompt, numSamples, experiments });
+  return postJson<DesignResult>("/api/design-pipeline", { prompt, numSamples, experiments, seedSmiles });
 }

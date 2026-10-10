@@ -4,10 +4,11 @@
  */
 
 import React, { useState } from "react";
-import { Rows3, GitCompare } from "lucide-react";
+import { Rows3, GitCompare, Dna } from "lucide-react";
 import { Panel, Button, Field, Badge, Spinner, ErrorNote } from "../../components/ui";
 import { batchLookup } from "../../api/client";
 import type { BatchResult } from "../../types";
+import { openMetabolite } from "../metabolites/actions";
 
 const METRICS: { key: "mw" | "clogp" | "tpsa" | "rotatable_bonds"; label: string }[] = [
   { key: "mw", label: "Molar mass" },
@@ -49,7 +50,7 @@ export default function BatchCompare() {
         <h1 className="flex items-center gap-2 text-xl font-bold text-slate-800">
           <GitCompare className="h-5 w-5 text-[#0A355C]" /> Compare Compounds
         </h1>
-        <p className="mt-1 text-sm text-slate-500">Look up several compounds at once and compare their properties side by side.</p>
+        <p className="mt-1 text-sm text-slate-500">Look up several compounds at once and compare their properties side by side — including which are human metabolites.</p>
       </div>
 
       <Panel>
@@ -82,6 +83,7 @@ export default function BatchCompare() {
                   {METRICS.map((m) => (
                     <th key={m.key} className="px-4 py-2 text-right font-medium">{m.label}</th>
                   ))}
+                  <th className="px-4 py-2 font-medium">In the body</th>
                 </tr>
               </thead>
               <tbody>
@@ -92,6 +94,13 @@ export default function BatchCompare() {
                     {METRICS.map((m) => (
                       <td key={m.key} className="px-4 py-2 text-right font-mono text-slate-700">{fmt(r.data![m.key] as any)}</td>
                     ))}
+                    <td className="px-4 py-2">
+                      {r.data!.hmdbAccession ? (
+                        <button onClick={() => openMetabolite(r.data!.hmdbAccession!)} className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline cursor-pointer">
+                          <Dna className="h-3 w-3" /> {r.data!.hmdbAccession}
+                        </button>
+                      ) : <span className="text-xs text-slate-300">—</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>

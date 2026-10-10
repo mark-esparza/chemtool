@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metabolite>
+  <version>5.0</version>
+  <accession>HMDB0000122</accession>
+  <secondary_accessions>
+    <accession>HMDB00122</accession>
+  </secondary_accessions>
+  <name>D-Glucose</name>
+  <description><![CDATA[D-Glucose is a monosaccharide &amp; the body's primary energy source.]]></description>
+  <synonyms>
+    <synonym>Dextrose</synonym>
+    <synonym>Grape sugar</synonym>
+  </synonyms>
+  <chemical_formula>C6H12O6</chemical_formula>
+  <average_molecular_weight>180.1559</average_molecular_weight>
+  <monisotopic_molecular_weight>180.063388116</monisotopic_molecular_weight>
+  <iupac_name>(3R,4S,5S,6R)-6-(hydroxymethyl)oxane-2,3,4,5-tetrol</iupac_name>
+  <cas_registry_number>50-99-7</cas_registry_number>
+  <smiles>OC[C@H]1OC(O)[C@H](O)[C@@H](O)[C@@H]1O</smiles>
+  <inchikey>WQZGKKKJIJFFOK-GASJEMHNSA-N</inchikey>
+  <taxonomy>
+    <description>This compound belongs to the class of organic compounds known as hexoses.</description>
+    <direct_parent>Hexoses</direct_parent>
+    <kingdom>Organic compounds</kingdom>
+    <super_class>Organic oxygen compounds</super_class>
+    <class>Organooxygen compounds</class>
+    <sub_class>Carbohydrates and carbohydrate conjugates</sub_class>
+  </taxonomy>
+  <state>Solid</state>
+  <biological_properties>
+    <cellular_locations>
+      <cellular>Cytoplasm</cellular>
+      <cellular>Extracellular</cellular>
+    </cellular_locations>
+    <biospecimen_locations>
+      <biospecimen>Blood</biospecimen>
+      <biospecimen>Urine</biospecimen>
+      <biospecimen>Cerebrospinal Fluid (CSF)</biospecimen>
+    </biospecimen_locations>
+    <tissue_locations>
+      <tissue>Liver</tissue>
+      <tissue>Muscle</tissue>
+    </tissue_locations>
+    <pathways>
+      <pathway>
+        <name>Glycolysis</name>
+        <smpdb_id>SMP0000040</smpdb_id>
+        <kegg_map_id>map00010</kegg_map_id>
+      </pathway>
+      <pathway>
+        <name>Gluconeogenesis</name>
+        <smpdb_id>SMP0000128</smpdb_id>
+        <kegg_map_id/>
+      </pathway>
+    </pathways>
+  </biological_properties>
+  <normal_concentrations>
+    <concentration>
+      <biospecimen>Blood</biospecimen>
+      <concentration_value>5000.0 +/- 1000.0</concentration_value>
+      <concentration_units>uM</concentration_units>
+      <subject_age>Adult (&gt;18 years old)</subject_age>
+      <subject_condition>Normal</subject_condition>
+    </concentration>
+    <concentration>
+      <biospecimen>Urine</biospecimen>
+      <concentration_value></concentration_value>
+      <concentration_units>umol/mmol creatinine</concentration_units>
+    </concentration>
+  </normal_concentrations>
+  <abnormal_concentrations>
+    <concentration>
+      <biospecimen>Blood</biospecimen>
+      <concentration_value>12000.0</concentration_value>
+      <concentration_units>uM</concentration_units>
+      <patient_information>Diabetes</patient_information>
+    </concentration>
+  </abnormal_concentrations>
+  <diseases>
+    <disease>
+      <name>Diabetes mellitus type 2</name>
+      <omim_id>125853</omim_id>
+    </disease>
+    <disease>
+      <name>Glycogen storage disease</name>
+    </disease>
+  </diseases>
+  <drugbank_id>DB09341</drugbank_id>
+  <pubchem_compound_id>5793</pubchem_compound_id>
+  <chebi_id>4167</chebi_id>
+  <kegg_id>C00031</kegg_id>
+  <protein_associations>
+    <protein>
+      <protein_accession>HMDBP00001</protein_accession>
+      <name>Hexokinase-1</name>
+      <uniprot_id>P19367</uniprot_id>
+      <gene_name>HK1</gene_name>
+      <protein_type>Enzyme</protein_type>
+    </protein>
+    <protein>
+      <protein_accession>HMDBP00002</protein_accession>
+      <name>Solute carrier family 2, facilitated glucose transporter member 1</name>
+      <uniprot_id>P11166</uniprot_id>
+      <gene_name>SLC2A1</gene_name>
+      <protein_type>Transporter</protein_type>
+    </protein>
+  </protein_associations>
+</metabolite>
