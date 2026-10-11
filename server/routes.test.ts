@@ -37,11 +37,22 @@ const PROPS: Record<number, Record<string, unknown>> = {
   9999999: { CID: 9999999, MolecularFormula: "C5H5", MolecularWeight: "65.09" },
 };
 
+/** Set by a test to make the next similarity call fail the way PubChem would. */
+let similarityFault: { status: number; body: string } | null = null;
+/** The similarity request the server actually made, for shape assertions. */
+let lastSimilarity: { url: string; method: string; body: string } | null = null;
+
 function pubchemStub(url: string, init?: any): Response | null {
   const body = new URLSearchParams(typeof init?.body === "string" ? init.body : "");
   const J = (o: unknown) => new Response(JSON.stringify(o), { headers: { "Content-Type": "application/json" } });
 
   if (url.includes("fastsimilarity_2d")) {
+    lastSimilarity = { url, method: init?.method ?? "GET", body: typeof init?.body === "string" ? init.body : "" };
+    if (similarityFault) {
+      const f = similarityFault;
+      similarityFault = null;
+      return new Response(f.body, { status: f.status });
+    }
     return J({ IdentifierList: { CID: [2244, 338, 54675783, 9999999] } });
   }
   if (url.includes("/compound/cid/property/")) {
@@ -185,4 +196,62 @@ test("POST /api/evaluate rejects an unparseable structure instead of inventing v
   const body = await bad.json();
   assert.match(body.error, /could not be parsed/);
   assert.equal(body.formula, undefined); // no placeholder record
+});
+
+test("the CID similarity call uses PUG-REST's documented GET shape", async () => {
+  lastSimilarity = null;
+  const res = await post("/api/analogs", { seed: "Aspirin", threshold: 80, maxRecords: 10, filters: noFilters });
+  assert.equal(res.status, 200);
+  assert.ok(lastSimilarity, "no similarity request was made");
+  // Identifier in the path, options in the query string. Folding either into a
+  // POST body is what made every search come back empty.
+  assert.equal(lastSimilarity!.method, "GET");
+  assert.match(lastSimilarity!.url, /\/compound\/fastsimilarity_2d\/cid\/2244\/cids\/JSON\?/);
+  const q = new URL(lastSimilarity!.url).searchParams;
+  assert.equal(q.get("Threshold"), "80");
+  assert.equal(q.get("MaxRecords"), "11"); // one extra: the seed matches itself
+  assert.equal(lastSimilarity!.body, "");
+});
+
+test("a rejected similarity search is an error, never an empty neighborhood", async () => {
+  // The regression: PubChem refusing the request used to be folded in with
+  // "no hits", so the interface advised lowering a threshold that was fine.
+  similarityFault = {
+    status: 400,
+    body: JSON.stringify({ Fault: { Code: "PUGREST.BadRequest", Message: "Unrecognized parameter", Details: ["bad option"] } }),
+  };
+  const res = await post("/api/analogs", { seed: "Aspirin", filters: noFilters });
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error, /PUGREST\.BadRequest/);
+  assert.match(body.error, /Unrecognized parameter/);
+  assert.equal(body.candidates, undefined, "a failed search must not return a candidate list");
+});
+
+test("a genuinely empty similarity result is a successful empty neighborhood", async () => {
+  // 404 is how PubChem says "nothing matched", which is a real answer.
+  similarityFault = { status: 404, body: JSON.stringify({ Fault: { Code: "PUGREST.NotFound" } }) };
+  const res = await post("/api/analogs", { seed: "Aspirin", filters: noFilters });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.candidates, []);
+  assert.equal(body.counts.retrieved, 0);
+});
+
+test("a PubChem outage during the property fetch surfaces rather than blanking every row", async () => {
+  const saved = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/compound/cid/property/") && init?.method === "POST") {
+      return new Response(JSON.stringify({ Fault: { Code: "PUGREST.ServerBusy", Message: "Too many requests" } }), { status: 503 });
+    }
+    return saved(input, init);
+  }) as typeof fetch;
+  try {
+    const res = await post("/api/analogs", { seed: "Aspirin", filters: noFilters });
+    assert.equal(res.status, 502);
+    assert.match((await res.json()).error, /ServerBusy|Too many requests/);
+  } finally {
+    globalThis.fetch = saved;
+  }
 });
