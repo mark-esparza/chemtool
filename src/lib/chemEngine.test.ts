@@ -131,3 +131,61 @@ test("no pseudo-structural fields are exposed", () => {
     assert.equal(p[gone], undefined, `${gone} should no longer be reported`);
   }
 });
+
+// --- Parser strictness -----------------------------------------------------
+// The parser used to skip any character it did not recognise, so text that is
+// not a structure still produced a molecule, and atoms it could not handle
+// vanished from the formula.
+
+test("chemical names and formulas are rejected, not scavenged for element letters", () => {
+  // "glucose" kept its c, o and s and reported CH2OS at 62.09 g/mol.
+  for (const notSmiles of ["glucose", "dopamine", "aspirin", "not a molecule"]) {
+    assert.throws(() => calculateProperties(notSmiles), /not a SMILES string|outside the element set/, notSmiles);
+  }
+  // A molecular formula is not a structure either: C6H12O6 has ring-bond
+  // digits that never close.
+  assert.throws(() => calculateProperties("C6H12O6"), /Unclosed ring bond/);
+});
+
+test("elements outside the organic subset are refused rather than dropped", () => {
+  // [K+].[Cl-] dropped the potassium and came back as HCl.
+  for (const salt of ["[K+].[Cl-]", "CC(=O)[O-].[Na+]", "[Fe+3]"]) {
+    assert.throws(() => calculateProperties(salt), /outside the element set this engine supports/, salt);
+  }
+});
+
+test("unterminated structures are errors", () => {
+  assert.throws(() => calculateProperties("C1CCCCC"), /Unclosed ring bond/); // would have read as hexane
+  assert.throws(() => calculateProperties("CC("), /Unclosed branch/);
+  assert.throws(() => calculateProperties("C1CC(("), /Unclosed branch/);
+  assert.throws(() => calculateProperties("CC="), /bond symbol at the end/);
+  assert.throws(() => calculateProperties("[12]"), /names no element/);
+});
+
+test("a bracket atom's stated hydrogens are used, not re-derived", () => {
+  // Deriving [nH] from valence gave zero hydrogens, costing one off the
+  // formula and losing the N-H donor — across every N-H heterocycle.
+  const pyrrole = calculateProperties("[nH]1cccc1");
+  assert.equal(pyrrole.formula, "C4H5N");
+  assert.equal(pyrrole.hbd, 1);
+  assert.equal(calculateProperties("c1ccc2[nH]ccc2c1").formula, "C8H7N"); // indole
+  assert.equal(calculateProperties("[NH4+]").formula, "H4N");
+});
+
+test("real SMILES keep parsing, in every spelling PubChem emits", () => {
+  const expected: [string, string][] = [
+    ["CC(=O)OC1=CC=CC=C1C(=O)O", "C9H8O4"],   // Kekule
+    ["CC(=O)Oc1ccccc1C(=O)O", "C9H8O4"],      // aromatic, same molecule
+    ["CN1C=NC2=C1C(=O)N(C(=O)N2C)C", "C8H10N4O2"], // caffeine
+    ["Cc1ccc(cc1)c1cc(nn1c1ccc(cc1)S(N)(=O)=O)C(F)(F)F", "C17H14F3N3O2S"], // celecoxib
+    ["C/C=C/C", "C4H8"],                      // stereo bonds
+    ["CC-CC", "C4H10"],                       // explicit single bond
+    ["C%10CCCCC%10", "C6H12"],                // two-digit ring closure
+    ["CCO.CCO", "C4H12O2"],                   // separate fragments
+    ["[2H]OC", "CH4O"],                       // isotope label
+    ["N[C@@H](C)C(=O)O", "C3H7NO2"],          // stereocentre
+  ];
+  for (const [smiles, formula] of expected) {
+    assert.equal(calculateProperties(smiles).formula, formula, smiles);
+  }
+});
