@@ -111,6 +111,20 @@ const ATOMIC_VALENCES: Record<string, number> = {
 /**
  * Parses a SMILES string into a 2D Chemical Graph
  */
+/** Elements this engine computes properties for: SMILES' organic subset. */
+const SUPPORTED_ELEMENTS = new Set(["C", "N", "O", "S", "P", "F", "CL", "BR", "H", "I"]);
+
+/**
+ * Real elements outside that subset. Only used to tell "this is a chemical we
+ * do not handle" apart from "this is not a structure at all".
+ */
+const OTHER_ELEMENTS = new Set([
+  "LI", "BE", "B", "NA", "MG", "AL", "SI", "K", "CA", "SC", "TI", "V", "CR", "MN", "FE", "CO",
+  "NI", "CU", "ZN", "GA", "GE", "AS", "SE", "RB", "SR", "Y", "ZR", "NB", "MO", "TC", "RU", "RH",
+  "PD", "AG", "CD", "IN", "SN", "SB", "TE", "XE", "CS", "BA", "LA", "PT", "AU", "HG", "TL", "PB",
+  "BI", "PO", "AT", "RN", "RA", "U", "GD", "W", "RE", "OS", "IR", "HE", "NE", "AR", "KR",
+]);
+
 export function parseSmiles(smiles: string): ChemGraph {
   const atoms: ChemAtom[] = [];
   const bonds: ChemBond[] = [];
@@ -121,6 +135,9 @@ export function parseSmiles(smiles: string): ChemGraph {
 
   const stack: number[] = [];
   const ringClosures = new Map<string, { atomId: number; bondType: string }>();
+  // A bracket atom declares its own hydrogens ([nH], [CH3], [NH4+]); those are
+  // final and must not be re-derived from valence afterwards.
+  const explicitH = new Map<number, number>();
   
   let i = 0;
   let lastAtomId: number | null = null;
@@ -129,6 +146,7 @@ export function parseSmiles(smiles: string): ChemGraph {
 
   while (i < len) {
     const char = smiles[i];
+    const tokenStart = i;
 
     // Branching start
     if (char === "(") {
@@ -166,6 +184,11 @@ export function parseSmiles(smiles: string): ChemGraph {
       // Stereochemistry backslash, treat as single bond
       i++;
       continue;
+    } else if (char === "-" || char === ":") {
+      // Explicit single bond, and the aromatic bond symbol. Both are legal
+      // outside brackets and carry no information this engine uses.
+      i++;
+      continue;
     } else if (char === ".") {
       // Unbonded fragments, dissociate lastAtomId
       lastAtomId = null;
@@ -178,6 +201,7 @@ export function parseSmiles(smiles: string): ChemGraph {
     let symbol = "";
     let isAromatic = false;
     let bracketContent = "";
+    let pendingExplicitH: number | null = null;
 
     if (char === "[") {
       i++;
@@ -190,11 +214,14 @@ export function parseSmiles(smiles: string): ChemGraph {
 
       // Extract symbol from bracket (e.g. [nH], [13C], [C@H])
       const match = bracketContent.match(/[A-Z][a-z]?|[a-z]/);
-      if (match) {
-        symbol = match[0];
-      } else {
-        symbol = "C";
+      if (!match) {
+        throw new Error(`Bracket atom "[${bracketContent}]" at position ${tokenStart} names no element`);
       }
+      symbol = match[0];
+
+      // Hydrogen count follows the symbol: "H" alone means one.
+      const hMatch = bracketContent.slice(bracketContent.indexOf(symbol) + symbol.length).match(/H(\d*)/);
+      if (hMatch) pendingExplicitH = hMatch[1] === "" ? 1 : parseInt(hMatch[1], 10);
     } else {
       // Standard elements: C, N, O, S, P, F, Cl, Br, I, c, n, o, s, p
       // Check for two-letter elements: Cl, Br
@@ -211,9 +238,18 @@ export function parseSmiles(smiles: string): ChemGraph {
     isAromatic = symbol === symbol.toLowerCase();
     const cleanSymbol = symbol.toUpperCase();
 
-    // Skip invalid entries
-    if (!["C", "N", "O", "S", "P", "F", "CL", "BR", "H", "I"].includes(cleanSymbol)) {
-      continue;
+    // Reject anything outside the supported set. Skipping it silently — which
+    // this did until it was caught — changes the molecule without saying so:
+    // "glucose" kept its c, o and s and reported CH2OS, and the salt
+    // [K+].[Cl-] dropped the potassium and came back as HCl.
+    if (!SUPPORTED_ELEMENTS.has(cleanSymbol)) {
+      if (OTHER_ELEMENTS.has(cleanSymbol)) {
+        throw new Error(
+          `"${symbol}" at position ${tokenStart} is outside the element set this engine supports ` +
+            `(C, N, O, S, P, F, Cl, Br, I, H). Look the compound up on the Compounds page instead.`
+        );
+      }
+      throw new Error(`Unexpected character "${symbol}" at position ${tokenStart}: this is not a SMILES string`);
     }
 
     // Create atom
@@ -224,6 +260,7 @@ export function parseSmiles(smiles: string): ChemGraph {
       implicitHydrogens: 0,
     };
     atoms.push(newAtom);
+    if (pendingExplicitH !== null) explicitH.set(newAtom.id, pendingExplicitH);
 
     // If we have a preceding atom, bond to it
     if (lastAtomId !== null) {
@@ -278,8 +315,29 @@ export function parseSmiles(smiles: string): ChemGraph {
     }
   }
 
+  // Unterminated constructs change the structure, so they are errors rather
+  // than something to shrug at: "C1CCCCC" would otherwise read as hexane
+  // instead of the cyclohexane whose ring bond was left open.
+  if (stack.length > 0) {
+    throw new Error(`Unclosed branch: ${stack.length} "(" without a matching ")"`);
+  }
+  if (ringClosures.size > 0) {
+    const ids = [...ringClosures.keys()].join(", ");
+    throw new Error(`Unclosed ring bond${ringClosures.size > 1 ? "s" : ""}: ${ids} opened but never closed`);
+  }
+  if (pendingBondOrder !== 1) {
+    throw new Error("A bond symbol at the end of the string has no atom after it");
+  }
+
   // Calculate implicit hydrogens for each atom
   for (const atom of atoms) {
+    const declared = explicitH.get(atom.id);
+    if (declared !== undefined) {
+      // e.g. the N-H of pyrrole or indole: deriving it from valence gave zero,
+      // which cost a hydrogen off the formula and the H-bond donor count.
+      atom.implicitHydrogens = declared;
+      continue;
+    }
     if (atom.symbol === "H") {
       atom.implicitHydrogens = 0;
       continue;
