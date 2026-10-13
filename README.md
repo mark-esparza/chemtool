@@ -95,6 +95,10 @@ needed.
 
 ## Citation
 
+Releases are archived on Zenodo. The concept DOI
+https://doi.org/10.5281/zenodo.23167241 always resolves to the latest archived
+release (currently v1.0.0, https://doi.org/10.5281/zenodo.23167242).
+
 If you use this software, please cite it using the metadata in
 [CITATION.cff](CITATION.cff), and cite the underlying databases for any data it
 retrieved — see the Sources section of the in-app Methods page.
