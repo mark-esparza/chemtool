@@ -111,7 +111,10 @@ test("falls back to PubChem's HMDB cross-reference when HMDB search finds nothin
     if (url.includes("/compound/name/glucoze/cids/")) return text("", 404);
     if (url.includes("/autocomplete/compound/glucoze")) return json({ dictionary_terms: { compound: ["glucose"] } });
     if (url.includes("/compound/name/glucose/cids/")) return json({ IdentifierList: { CID: [5793] } });
-    if (url.includes("/compound/cid/5793/synonyms/")) return json({ InformationList: { Information: [{ Synonym: ["D-glucose", "Dextrose", "HMDB0000122"] }] } });
+    // Shaped like the live service: the accession is a RegistryID cross-reference
+    // and does not appear among the synonyms.
+    if (url.includes("/compound/cid/5793/synonyms/")) return json({ InformationList: { Information: [{ Synonym: ["D-glucose", "Dextrose"] }] } });
+    if (url.includes("/compound/cid/5793/xrefs/RegistryID/")) return json({ InformationList: { Information: [{ RegistryID: ["50-99-7", "CHEBI:4167", "HMDB0000122"] }] } });
     if (url.includes("/compound/cid/5793/")) return json({});
     if (url.endsWith("/metabolites/HMDB0000122.xml")) return text(XML);
     return text("unexpected", 500);
