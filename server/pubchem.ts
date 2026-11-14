@@ -127,20 +127,31 @@ export async function fetchPubChemData(q: string) {
       console.error("Failed to fetch description: ", e);
     }
 
-    // Fetch Synonyms. The full list is scanned for an HMDB accession (HMDB deposits
-    // into PubChem), which cross-links the compound to its human-metabolite record.
+    // Fetch Synonyms
     let synonyms: string[] = [];
-    let hmdbAccession: string | null = null;
     try {
       const synResponse = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/synonyms/JSON`);
       if (synResponse.ok) {
         const synData: any = await synResponse.json();
-        const all: string[] = synData?.InformationList?.Information?.[0]?.Synonym || [];
-        synonyms = all.slice(0, 10);
-        hmdbAccession = findHmdbAccession(all);
+        synonyms = synData?.InformationList?.Information?.[0]?.Synonym?.slice(0, 10) || [];
       }
     } catch (e) {
       console.error("Failed to fetch synonyms: ", e);
+    }
+
+    // HMDB cross-reference. PubChem lists depositor identifiers under
+    // xrefs/RegistryID, not among the synonyms: checked against the live
+    // service, the synonym lists of aspirin, glucose and dopamine contain no
+    // HMDB accession at all, while RegistryID carries one for each.
+    let hmdbAccession: string | null = null;
+    try {
+      const xrefResponse = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/xrefs/RegistryID/JSON`);
+      if (xrefResponse.ok) {
+        const xrefData: any = await xrefResponse.json();
+        hmdbAccession = findHmdbAccession(xrefData?.InformationList?.Information?.[0]?.RegistryID || []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch cross-references: ", e);
     }
 
     const commonName = synonyms?.[0] || resolvedQuery.charAt(0).toUpperCase() + resolvedQuery.slice(1);
