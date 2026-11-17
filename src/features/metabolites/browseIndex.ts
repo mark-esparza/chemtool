@@ -32,10 +32,10 @@ export const BROWSE_CATEGORIES: BrowseCategory[] = [
     label: "Energy & carbohydrates",
     blurb: "Glycolysis, the TCA cycle, and the sugars that feed them.",
     members: [
-      "Glucose", "Fructose", "Galactose", "Mannose", "Sucrose", "Lactose",
+      "Glucose", "Fructose", "Galactose", "Sucrose", "Lactose",
       "Pyruvic acid", "Lactic acid", "Citric acid", "Succinic acid",
       "Fumaric acid", "Malic acid", "Oxaloacetic acid", "Glucose 6-phosphate",
-      "Ribose", "Glycerol",
+      "Glycerol",
     ],
   },
   {
@@ -56,7 +56,7 @@ export const BROWSE_CATEGORIES: BrowseCategory[] = [
     members: [
       "Dopamine", "Serotonin", "Norepinephrine", "Epinephrine", "Acetylcholine",
       "Histamine", "L-DOPA", "Homovanillic acid", "5-Hydroxyindoleacetic acid",
-      "Vanillylmandelic acid", "Normetanephrine", "Metanephrine", "Adenosine",
+      "Normetanephrine", "Metanephrine", "Adenosine",
       "Tryptamine",
     ],
   },
@@ -87,9 +87,8 @@ export const BROWSE_CATEGORIES: BrowseCategory[] = [
     blurb: "Water- and fat-soluble vitamins and the cofactors derived from them.",
     members: [
       "Thiamine", "Riboflavin", "Niacin", "Nicotinamide", "Pantothenic acid",
-      "Pyridoxine", "Biotin", "Folic acid", "Cobalamin", "Ascorbic acid",
-      "Retinol", "Alpha-Tocopherol", "Choline", "Betaine",
-      "S-Adenosylmethionine", "Coenzyme Q10",
+      "Pyridoxine", "Biotin", "Folic acid", "Ascorbic acid",
+      "Retinol", "Alpha-Tocopherol", "Choline", "Coenzyme Q10",
     ],
   },
   {
@@ -119,12 +118,35 @@ export const BROWSE_CATEGORIES: BrowseCategory[] = [
     label: "Drugs & xenobiotics",
     blurb: "Compounds the body processes but does not make.",
     members: [
-      "Caffeine", "Theobromine", "Theophylline", "Nicotine", "Cotinine",
-      "Ethanol", "Acetaminophen", "Salicylic acid", "Ibuprofen", "Metformin",
+      "Caffeine", "Theobromine", "Theophylline", "Nicotine", "Ethanol", "Acetaminophen", "Salicylic acid", "Ibuprofen", "Metformin",
       "Warfarin", "Morphine", "Codeine",
     ],
   },
 ];
+
+/**
+ * The query sent for an index entry, where the familiar name is not the one to
+ * ask for. A bare name such as "glucose" resolves to PubChem's generic entry,
+ * while HMDB's annotations sit on one specific stereoisomer or on the
+ * substance's drug name. Each of these was checked against the live service;
+ * every other entry is queried by the name shown.
+ */
+const QUERY_FOR: Record<string, string> = {
+  Glucose: "beta-D-Glucose",
+  Fructose: "beta-D-Fructofuranose",
+  Galactose: "alpha-D-Galactose",
+  Lactose: "alpha-Lactose",
+  "Lactic acid": "L-Lactic acid",
+  "Malic acid": "L-Malic acid",
+  "3-Hydroxybutyric acid": "(R)-3-Hydroxybutyric acid",
+  Carnitine: "L-Carnitine",
+  "Docosahexaenoic acid": "Doconexent",
+  "Eicosapentaenoic acid": "Icosapent",
+};
+
+export function queryForBrowseName(name: string): string {
+  return QUERY_FOR[name] ?? name;
+}
 
 /** Every name in the index, de-duplicated and sorted. */
 export const ALL_BROWSE_NAMES: string[] = [

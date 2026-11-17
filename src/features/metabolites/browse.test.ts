@@ -8,7 +8,7 @@
 
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { BROWSE_CATEGORIES, ALL_BROWSE_NAMES, randomMetaboliteName } from "./browseIndex.ts";
+import { BROWSE_CATEGORIES, ALL_BROWSE_NAMES, randomMetaboliteName, queryForBrowseName } from "./browseIndex.ts";
 import { noteViewed, clearRecent, getRecent } from "./recent.ts";
 
 test("every category is populated and uniquely keyed", () => {
@@ -75,4 +75,11 @@ test("recently viewed is capped and ignores entries with no accession", () => {
   const before = getRecent().length;
   noteViewed({ accession: "", name: "nameless" });
   assert.equal(getRecent().length, before);
+});
+
+test("entries are queried by their own name unless a checked spelling replaces it", () => {
+  assert.equal(queryForBrowseName("Dopamine"), "Dopamine");
+  // "Glucose" alone lands on a generic PubChem entry with a near-empty HMDB record.
+  assert.equal(queryForBrowseName("Glucose"), "beta-D-Glucose");
+  assert.ok(ALL_BROWSE_NAMES.includes("Glucose"));
 });

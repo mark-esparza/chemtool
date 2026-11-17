@@ -8,7 +8,7 @@
 
 import { useState } from "react";
 import { Box, Btn, Ext, LinkBtn } from "../../components/ui";
-import { BROWSE_CATEGORIES, ALL_BROWSE_NAMES, randomMetaboliteName } from "./browseIndex";
+import { BROWSE_CATEGORIES, ALL_BROWSE_NAMES, randomMetaboliteName, queryForBrowseName } from "./browseIndex";
 import { useRecent, clearRecent } from "./recent";
 
 export default function BrowseIndex({
@@ -65,7 +65,7 @@ export default function BrowseIndex({
       <ul className="index-list">
         {names.map((n) => (
           <li key={n}>
-            <LinkBtn onClick={() => onPick(n)} disabled={busy}>
+            <LinkBtn onClick={() => onPick(queryForBrowseName(n))} disabled={busy}>
               {n}
             </LinkBtn>
           </li>
@@ -74,7 +74,7 @@ export default function BrowseIndex({
 
       <hr />
       <div className="row">
-        <Btn onClick={() => onPick(randomMetaboliteName())} disabled={busy}>
+        <Btn onClick={() => onPick(queryForBrowseName(randomMetaboliteName()))} disabled={busy}>
           Surprise me
         </Btn>
         <span className="small muted" style={{ alignSelf: "center" }}>

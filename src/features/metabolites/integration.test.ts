@@ -45,6 +45,8 @@ const glucose: HmdbMetabolite = {
   xrefs: { pubchemCid: 5793, keggId: "C00031", chebiId: "4167", drugbankId: null },
   url: "https://hmdb.ca/metabolites/HMDB0000122",
   structureImage: "",
+  source: "hmdb",
+  unavailable: [],
 };
 
 beforeEach(() => clearBank());
