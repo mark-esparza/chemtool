@@ -132,17 +132,113 @@ test("returns null when neither HMDB nor PubChem know the chemical", async () =>
   assert.equal(await fetchMetabolite("sodium chloride"), null);
 });
 
-test("treats a bot-check HTML page as an outage, not data", async () => {
+test("a bot-check HTML page is never parsed as data, and with PubChem down too the lookup fails", async () => {
   stubFetch((url) => {
     if (url.endsWith(".xml")) return text("<!DOCTYPE html><html><title>Just a moment...</title></html>");
     return text("unexpected", 500);
   });
-  await assert.rejects(fetchMetabolite("HMDB0000122"), /currently unreachable/);
+  await assert.rejects(fetchMetabolite("HMDB0000122"), /Neither the Human Metabolome Database nor PubChem/);
 });
 
-test("reports HMDB as unreachable when search fails and PubChem has no link", async () => {
+test("reports a failure only when both HMDB and PubChem are unreachable", async () => {
   stubFetch(() => {
     throw new TypeError("fetch failed");
   });
-  await assert.rejects(fetchMetabolite("dopamine"), /currently unreachable/);
+  await assert.rejects(fetchMetabolite("dopamine"), /Neither the Human Metabolome Database nor PubChem/);
+});
+
+// --- HMDB refuses the request: build the record from PubChem's copy ----------
+
+/** PUG-View shaped like the live service, with one non-HMDB item mixed in. */
+const PUG_VIEW = {
+  Record: {
+    Reference: [
+      { ReferenceNumber: 44, SourceName: "Human Metabolome Database (HMDB)", SourceID: "HMDB0000073" },
+      { ReferenceNumber: 9, SourceName: "Some Other Source", SourceID: "X1" },
+    ],
+    Section: [
+      {
+        TOCHeading: "Pharmacology and Biochemistry",
+        Section: [
+          {
+            TOCHeading: "Human Metabolite Information",
+            Section: [
+              { TOCHeading: "Tissue Locations", Information: [{ ReferenceNumber: 44, Value: { StringWithMarkup: [{ String: "Adrenal Medulla" }, { String: "Brain" }] } }] },
+              {
+                TOCHeading: "Cellular Locations",
+                Information: [
+                  { ReferenceNumber: 44, Value: { StringWithMarkup: [{ String: "Cytoplasm" }] } },
+                  { ReferenceNumber: 9, Value: { StringWithMarkup: [{ String: "Not From HMDB" }] } },
+                ],
+              },
+              {
+                TOCHeading: "Metabolite Pathways",
+                Information: [{ ReferenceNumber: 44, Value: { StringWithMarkup: [
+                  { String: "Tyrosine Metabolism", Markup: [{ URL: "http://smpdb.ca/view/SMP00006" }] },
+                  { String: "Alkaptonuria" },
+                ] } }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        TOCHeading: "Associated Disorders and Diseases",
+        Section: [{ TOCHeading: "Disease and References", Information: [
+          { ReferenceNumber: 44, Name: "Parkinson's disease", Value: { StringWithMarkup: [{ String: "PubMed: 1" }] } },
+          { ReferenceNumber: 44, Name: "Parkinson's disease", Value: { StringWithMarkup: [{ String: "PubMed: 2" }] } },
+        ] }],
+      },
+    ],
+  },
+};
+
+function hmdbRefusing(url: string): Response | null {
+  if (url.includes("hmdb.ca")) return text("Forbidden", 403);
+  if (url.includes("/compound/name/dopamine/cids/")) return json({ IdentifierList: { CID: [681] } });
+  if (url.includes("/xref/RegistryID/HMDB0000073/cids/")) return json({ IdentifierList: { CID: [681] } });
+  if (url.includes("/compound/cid/681/property/")) return json({ PropertyTable: { Properties: [{ MolecularFormula: "C8H11NO2", MolecularWeight: "153.18", SMILES: "NCCc1ccc(O)c(O)c1" }] } });
+  if (url.includes("/compound/cid/681/synonyms/")) return json({ InformationList: { Information: [{ Synonym: ["Dopamine"] }] } });
+  if (url.includes("/compound/cid/681/xrefs/RegistryID/")) return json({ InformationList: { Information: [{ RegistryID: ["HMDB0000073"] }] } });
+  if (url.includes("/pug_view/data/compound/681/")) return json(PUG_VIEW);
+  if (url.includes("/compound/cid/681/")) return json({});
+  return null;
+}
+
+test("when HMDB refuses the request, the record is built from PubChem's HMDB annotations", async () => {
+  stubFetch((url) => hmdbRefusing(url) ?? text("", 404));
+  const m = await fetchMetabolite("dopamine");
+  assert.equal(m?.accession, "HMDB0000073");
+  assert.equal(m?.source, "pubchem");
+  assert.equal(m?.formula, "C8H11NO2");
+  assert.deepEqual(m?.tissues, ["Adrenal Medulla", "Brain"]);
+  // Only items PubChem attributes to HMDB are taken.
+  assert.deepEqual(m?.cellularLocations, ["Cytoplasm"]);
+  assert.deepEqual(m?.pathways, [
+    { name: "Tyrosine Metabolism", smpdbId: "SMP00006", keggMapId: null },
+    { name: "Alkaptonuria", smpdbId: null, keggMapId: null },
+  ]);
+  assert.deepEqual(m?.diseases, ["Parkinson's disease"]); // de-duplicated
+  // What this route cannot supply is declared, not left looking like an empty record.
+  assert.deepEqual(m?.concentrations, []);
+  assert.ok(m?.unavailable.includes("normal concentrations"));
+  assert.ok(m?.unavailable.includes("enzymes and transporters"));
+});
+
+test("an accession resolves through PubChem too, and a refusal is not retried on every lookup", async () => {
+  stubFetch((url) => hmdbRefusing(url) ?? text("", 404));
+  assert.equal((await fetchMetabolite("HMDB0000073"))?.source, "pubchem");
+  const hmdbCalls = calls.filter((u) => u.includes("hmdb.ca")).length;
+  __test.clearCacheKeepingRefusal();
+  await fetchMetabolite("dopamine");
+  assert.equal(calls.filter((u) => u.includes("hmdb.ca")).length, hmdbCalls, "hmdb.ca was asked again after refusing");
+});
+
+test("a compound PubChem holds no HMDB record for is not a metabolite", async () => {
+  stubFetch((url) => {
+    if (url.includes("/pug_view/")) return json({ Record: { Reference: [{ ReferenceNumber: 9, SourceName: "Some Other Source" }], Section: [] } });
+    if (url.includes("/xrefs/RegistryID/")) return json({ InformationList: { Information: [{ RegistryID: [] }] } });
+    return hmdbRefusing(url) ?? text("", 404);
+  });
+  assert.equal(await fetchMetabolite("dopamine"), null);
 });

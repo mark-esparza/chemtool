@@ -37,6 +37,15 @@ export default function MetaboliteRecord({ m }: { m: HmdbMetabolite }) {
 
   return (
     <>
+      {m.source === "pubchem" && (
+        <Note kind="info" title="Read from PubChem's copy of the HMDB record">
+          hmdb.ca does not answer automated requests from this server, so this record is built from
+          the annotations HMDB deposits in PubChem. That copy does not include{" "}
+          {m.unavailable.join(", ")}; those sections are absent here because they could not be
+          retrieved, not because the metabolite lacks them. The complete record is at{" "}
+          <Ext href={m.url}>{m.accession} on HMDB</Ext>.
+        </Note>
+      )}
       <Box
         title={`${m.name} — ${m.accession}`}
         actions={
@@ -293,7 +302,7 @@ export default function MetaboliteRecord({ m }: { m: HmdbMetabolite }) {
         </Box>
       )}
 
-      {m.pathways.length === 0 && m.proteins.length === 0 && (
+      {m.source === "hmdb" && m.pathways.length === 0 && m.proteins.length === 0 && (
         <Note kind="info">
           This HMDB record carries no pathway or protein associations. That is a gap in the record,
           not evidence that the metabolite has none.

@@ -17,6 +17,7 @@
 import type { HmdbMetabolite, HmdbConcentration, HmdbPathway, HmdbProtein } from "../src/types/index.js";
 import { normalizeHmdbAccession } from "./hmdbIds.js";
 import { fetchPubChemData } from "./pubchem.js";
+import { fetchMetaboliteViaPubChem } from "./hmdbViaPubchem.js";
 
 export type { HmdbMetabolite };
 
@@ -169,6 +170,8 @@ function parseMetaboliteXml(xml: string, accession: string): HmdbMetabolite {
     },
     url: `https://hmdb.ca/metabolites/${accession}`,
     structureImage: `https://hmdb.ca/structures/${accession}/image.png`,
+    source: "hmdb",
+    unavailable: [],
   };
 }
 
@@ -226,45 +229,74 @@ async function fetchXml(accession: string): Promise<HmdbMetabolite | null> {
   return parseMetaboliteXml(xml, accession);
 }
 
+// hmdb.ca refuses automated requests from many hosts (HTTP 403), the deployed
+// one included. Once it has refused, stop asking for a while rather than pay a
+// failed round trip on every lookup.
+const DIRECT_RETRY_MS = 60 * 60 * 1000;
+let directRefusedAt = 0;
+
+/** Read the record from hmdb.ca itself. */
+async function fetchDirect(trimmed: string): Promise<HmdbMetabolite | null> {
+  let accession = normalizeHmdbAccession(trimmed);
+  if (!accession) {
+    let searchError: unknown = null;
+    try {
+      accession = await resolveViaHmdbSearch(trimmed);
+    } catch (err) {
+      searchError = err;
+    }
+    if (!accession) accession = await resolveViaPubChem(trimmed);
+    if (!accession) {
+      if (searchError) throw searchError;
+      return null;
+    }
+  }
+  return fetchXml(accession);
+}
+
 /**
- * Look up a metabolite by name (or HMDB accession, 5- or 7-digit) against the live
- * HMDB. Returns null when HMDB has no such metabolite; throws when HMDB is unreachable.
+ * Look up a metabolite by name or HMDB accession (5- or 7-digit).
+ *
+ * HMDB's own record is preferred because it is complete. When hmdb.ca cannot
+ * be read, the record is built from the annotations HMDB deposits in PubChem;
+ * it is marked as such and lists what that route does not carry. Returns null
+ * when no HMDB record exists; throws only when neither source can be reached.
  */
 export async function fetchMetabolite(q: string): Promise<HmdbMetabolite | null> {
   const trimmed = q.trim();
   if (!trimmed) return null;
   const key = trimmed.toLowerCase();
 
-  let accession = normalizeHmdbAccession(trimmed) ?? fresh(queryToAccession, key)?.accession ?? null;
-  if (accession) {
-    const cached = fresh(byAccession, accession);
+  const known = normalizeHmdbAccession(trimmed) ?? fresh(queryToAccession, key)?.accession ?? null;
+  if (known) {
+    const cached = fresh(byAccession, known);
     if (cached) return cached.value;
   }
 
-  try {
-    if (!accession) {
-      let searchError: unknown = null;
-      try {
-        accession = await resolveViaHmdbSearch(trimmed);
-      } catch (err) {
-        searchError = err;
-      }
-      if (!accession) accession = await resolveViaPubChem(trimmed);
-      if (!accession) {
-        if (searchError) throw searchError;
-        return null;
-      }
-    }
-
-    const data = await fetchXml(accession);
-    if (!data) return null;
-    remember(byAccession, accession, { at: Date.now(), value: data });
-    remember(queryToAccession, key, { at: Date.now(), accession });
+  const keep = (data: HmdbMetabolite) => {
+    remember(byAccession, data.accession, { at: Date.now(), value: data });
+    remember(queryToAccession, key, { at: Date.now(), accession: data.accession });
     return data;
+  };
+
+  if (Date.now() - directRefusedAt > DIRECT_RETRY_MS) {
+    try {
+      const data = await fetchDirect(known ?? trimmed);
+      return data ? keep(data) : null;
+    } catch (err) {
+      directRefusedAt = Date.now();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[HMDB] Direct read failed (${msg.slice(0, 80)}); using PubChem's HMDB annotations.`);
+    }
+  }
+
+  try {
+    const data = await fetchMetaboliteViaPubChem(known ?? trimmed);
+    return data ? keep(data) : null;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.log(`[HMDB] Lookup failed for "${trimmed}": ${msg.slice(0, 120)}`);
-    throw new Error(`The Human Metabolome Database is currently unreachable, so "${trimmed}" could not be looked up. Check network access to hmdb.ca and try again.`);
+    console.log(`[HMDB] PubChem route failed for "${trimmed}": ${msg.slice(0, 120)}`);
+    throw new Error(`Neither the Human Metabolome Database nor PubChem's copy of its annotations could be reached, so "${trimmed}" could not be looked up. Try again shortly.`);
   }
 }
 
@@ -272,6 +304,11 @@ export async function fetchMetabolite(q: string): Promise<HmdbMetabolite | null>
 export const __test = {
   parseMetaboliteXml,
   clearCache: () => {
+    byAccession.clear();
+    queryToAccession.clear();
+    directRefusedAt = 0;
+  },
+  clearCacheKeepingRefusal: () => {
     byAccession.clear();
     queryToAccession.clear();
   },

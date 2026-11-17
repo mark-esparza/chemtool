@@ -203,6 +203,13 @@ export interface HmdbMetabolite {
   xrefs: HmdbXrefs;
   url: string;
   structureImage: string;
+  /**
+   * Where the record was read from: HMDB's own page, or the annotations HMDB
+   * deposits in PubChem, used when HMDB refuses the server's requests.
+   */
+  source: "hmdb" | "pubchem";
+  /** Parts of an HMDB record this source does not carry; empty when complete. */
+  unavailable: string[];
 }
 
 export interface HmdbBatchResult {
